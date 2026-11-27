@@ -17,11 +17,6 @@ _ROCM_DTYPE_MAP = {
 }
 
 
-def _cuda_supports_bfloat16() -> bool:
-    """Return whether the active CUDA device supports native bfloat16 kernels."""
-    return gpu_config.cuda_supports_bfloat16()
-
-
 def _resolve_rocm_dtype() -> torch.dtype:
     """Return a safe model dtype for ROCm/HIP devices.
 

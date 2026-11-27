@@ -21,7 +21,7 @@ Usage:
 """
 
 from enum import Enum, auto
-from typing import Optional, Dict, Any, Tuple, List, Callable, Set
+from typing import Optional, Dict, Tuple, List, Set
 from loguru import logger
 from transformers import AutoTokenizer
 from transformers.generation.logits_process import LogitsProcessor
@@ -30,8 +30,6 @@ import torch
 from acestep.constants import (
     VALID_LANGUAGES,
     KEYSCALE_NOTES,
-    KEYSCALE_ACCIDENTALS,
-    KEYSCALE_MODES,
     VALID_KEYSCALES,
     BPM_MIN,
     BPM_MAX,
@@ -582,29 +580,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         elif self.debug:
             logger.debug(f"Found {len(self.audio_code_token_ids)} valid audio code tokens (range [0, {MAX_AUDIO_CODE}])")
     
-    def _extract_code_from_token(self, token_id: int) -> Optional[int]:
-        """
-        Extract audio code value from a token ID.
-        
-        Args:
-            token_id: Token ID to extract code value from
-            
-        Returns:
-            Code value if token is a valid audio code token, None otherwise
-        """
-        import re
-        audio_code_pattern = re.compile(r'^<\|audio_code_(\d+)\|>$')
-        
-        try:
-            token_text = self.tokenizer.decode([token_id])
-            match = audio_code_pattern.match(token_text)
-            if match:
-                return int(match.group(1))
-        except Exception:
-            pass
-        
-        return None
-    
     def _build_audio_code_mask(self):
         """
         Build a precomputed mask tensor for blocking audio code tokens.
@@ -910,46 +885,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         
         return prefix_to_tokens
     
-    def diagnose_keyscale_prefix_tree(self):
-        """
-        Diagnose the keyscale prefix tree to help debug generation bias.
-        Call this method to print detailed information about allowed tokens at each prefix.
-        """
-        print("=" * 60)
-        print("KEYSCALE PREFIX TREE DIAGNOSIS")
-        print("=" * 60)
-        
-        # Check empty prefix (first token)
-        if "" in self.keyscale_prefix_tree:
-            first_tokens = self.keyscale_prefix_tree[""]
-            print(f"\n[Empty prefix] Allowed first tokens ({len(first_tokens)} total):")
-            for t in sorted(first_tokens):
-                decoded = self.tokenizer.decode([t])
-                print(f"  Token {t}: {repr(decoded)}")
-        else:
-            print("\nWARNING: Empty prefix not in tree!")
-        
-        # Check some common prefixes
-        test_prefixes = ["A", "B", "C", "D", "E", "F", "G"]
-        for prefix in test_prefixes:
-            # Try both with and without potential tokenizer artifacts
-            for test_key in [prefix, prefix + " "]:
-                if test_key in self.keyscale_prefix_tree:
-                    tokens = self.keyscale_prefix_tree[test_key]
-                    print(f"\n[Prefix {repr(test_key)}] Allowed tokens ({len(tokens)}):")
-                    for t in sorted(tokens):
-                        decoded = self.tokenizer.decode([t])
-                        print(f"  Token {t}: {repr(decoded)}")
-        
-        # Show some complete keyscales that should be valid
-        print(f"\n[Valid keyscales] Total: {len(self.valid_keyscales)}")
-        sample = sorted(list(self.valid_keyscales))[:10]
-        for ks in sample:
-            print(f"  {repr(ks)}")
-        
-        print("=" * 60)
-
-    
     def _load_genres_vocab(self):
         """
         Load genres vocabulary from file. Supports hot reload by checking file mtime.
@@ -1000,62 +935,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         
         if self.debug:
             logger.debug(f"Built genres trie with {len(self.genres_vocab)} entries")
-    
-    def _extract_caption_genres(self, caption: str):
-        """
-        Extract genres from the user's caption that match entries in the vocabulary.
-        This creates a smaller trie for faster and more relevant genre generation.
-        
-        Strategy (optimized - O(words * max_genre_len) instead of O(vocab_size)):
-        1. Extract words/phrases from caption
-        2. For each word, use trie to find all vocab entries that START with this word
-        3. Build a separate trie from matched genres
-        """
-        if not caption or not self.genres_vocab:
-            return
-        
-        caption_lower = caption.lower()
-        matched_genres = set()
-        
-        # Extract words from caption (split by common delimiters)
-        import re
-        words = re.split(r'[,\s\-_/\\|]+', caption_lower)
-        words = [w.strip() for w in words if w.strip() and len(w.strip()) >= 2]
-        
-        # For each word, find genres in trie that start with this word
-        for word in words:
-            # Find all genres starting with this word using trie traversal
-            node = self._get_genres_trie_node(word)
-            if node is not None:
-                # Collect all complete genres under this node
-                self._collect_complete_genres(node, word, matched_genres)
-        
-        # Also check if any word appears as a substring in short genres (< 20 chars)
-        # This is a quick check for common single-word genres
-        genres_set = set(self.genres_vocab)
-        for word in words:
-            if word in genres_set:
-                matched_genres.add(word)
-        
-        if not matched_genres:
-            if self.debug:
-                logger.debug(f"No genres matched in caption, using full vocab")
-            return
-        
-        # Build a trie from matched genres
-        self.caption_matched_genres = list(matched_genres)
-        self.caption_genres_trie = {}
-        
-        for genre in matched_genres:
-            node = self.caption_genres_trie
-            for char in genre:
-                if char not in node:
-                    node[char] = {}
-                node = node[char]
-            node['_end'] = True
-        
-        if self.debug:
-            logger.debug(f"Matched {len(matched_genres)} genres from caption: {list(matched_genres)[:5]}...")
     
     def _collect_complete_genres(self, node: Dict, prefix: str, result: set, max_depth: int = 50):
         """
@@ -1151,11 +1030,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
                 return None
             node = node[char]
         return node
-    
-    def _is_complete_genre(self, text: str) -> bool:
-        """Check if the given text is a complete genre in the vocabulary."""
-        node = self._get_genres_trie_node(text.strip())
-        return node is not None and node.get('_end', False)
     
     def _get_trie_node_from_trie(self, trie: Dict, prefix: str) -> Optional[Dict]:
         """Get a trie node from a specific trie (helper for caption vs full trie)."""
@@ -1300,38 +1174,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
             if self.debug:
                 logger.debug("Target duration cleared, no duration constraint")
     
-    def set_max_duration(self, max_duration: int):
-        """
-        Dynamically update the maximum allowed duration for constrained decoding.
-        
-        This method should be called when GPU configuration changes (e.g., LM initialization state changes).
-        It rebuilds the duration prefix tree to constrain duration values to the new maximum.
-        
-        Args:
-            max_duration: Maximum duration in seconds (e.g., 120 for 2 minutes, 360 for 6 minutes)
-        """
-        if max_duration == self.max_duration:
-            return  # No change needed
-        
-        old_max = self.max_duration
-        self.max_duration = max_duration
-        
-        # Update field specs
-        self.field_specs["duration"]["max"] = max_duration
-        
-        # Rebuild valid duration values
-        self.valid_duration_values = [str(v) for v in range(self.field_specs["duration"]["min"], self.field_specs["duration"]["max"] + 1)]
-        
-        # Rebuild duration prefix tree
-        self.duration_prefix_tree = self._build_numeric_prefix_tree(
-            self.valid_duration_values,
-            context_prefix_for_matching="duration:",
-            context_prefix_for_tokenization="duration: "
-        )
-        
-        if self.debug:
-            logger.debug(f"Updated max duration: {old_max}s -> {max_duration}s, rebuilt prefix tree with {len(self.valid_duration_values)} values")
-    
     def _get_allowed_tokens_for_fixed_string(self, fixed_str: str) -> List[int]:
         """
         Get the token IDs that can continue the fixed string from current position.
@@ -1462,36 +1304,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         # The caller will handle this by forcing newline to end the field
         return []
     
-    def _should_end_numeric_field(self, logits: torch.Tensor, min_val: int, max_val: int) -> bool:
-        """
-        Determine if we should end the current numeric field.
-        Returns True if P(newline) > P(any valid digit) AND current value is valid.
-        """
-        if not self.accumulated_value:
-            return False
-        
-        current = int(self.accumulated_value)
-        if current < min_val or current > max_val:
-            return False  # Can't end yet, value not in range
-        
-        # Get probabilities
-        probs = torch.softmax(logits, dim=-1)
-        
-        newline_prob = probs[0, self.newline_token].item() if self.newline_token else 0
-        
-        # Get max probability among valid digit tokens
-        allowed_digits = self._get_allowed_digit_tokens(min_val, max_val)
-        if not allowed_digits:
-            return True  # No more digits possible, must end
-        
-        max_digit_prob = max(probs[0, t].item() for t in allowed_digits)
-        
-        if self.debug:
-            logger.debug(f"Numeric field decision: newline_prob={newline_prob:.4f}, max_digit_prob={max_digit_prob:.4f}")
-        
-        return newline_prob > max_digit_prob
-
-    
     def _should_end_text_field(self, logits: torch.Tensor) -> bool:
         """
         Determine if we should end a text field (genres).
@@ -1525,17 +1337,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         # Fallback: if we somehow drifted off (shouldn't happen with constrained decoding),
         # return empty to force newline logic or stop.
         return []
-    
-    def _is_keyscale_complete(self) -> bool:
-        """
-        Check if keyscale value is complete and valid.
-        Uses token ID sequence to check if current prefix allows newline.
-        """
-        token_prefix = tuple(self.accumulated_token_ids)
-        # If current token sequence prefix is in tree and allows newline, it's complete
-        if token_prefix in self.keyscale_prefix_tree:
-            return self.newline_token in self.keyscale_prefix_tree[token_prefix]
-        return False
     
     def _get_allowed_language_tokens(self) -> List[int]:
         """
@@ -1693,52 +1494,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         
         # Apply temperature scaling
         return scores / temperature
-    
-    def _get_user_provided_field_tokens(self, field_name: str) -> Optional[List[int]]:
-        """
-        Get token sequence for a user-provided field (field_name + value + newline).
-        Uses the same tokenization logic as prefix tree building.
-        
-        Args:
-            field_name: Field name ("bpm", "caption", "duration", "keyscale", "language", "timesignature")
-            
-        Returns:
-            List of token IDs for the complete field, or None if field is not provided
-        """
-        value = self.user_provided_metadata.get(field_name)
-        if value is None:
-            return None
-        
-        # Build full field string with space (matching prefix tree tokenization)
-        field_to_prefix = {
-            "bpm": "bpm: ",
-            "caption": "caption: ",
-            "duration": "duration: ",
-            "keyscale": "keyscale: ",
-            "language": "language: ",
-            "timesignature": "timesignature: ",
-            "genres": "genres: ",
-        }
-        prefix = field_to_prefix[field_name]
-        full_text = f"{prefix}{value}\n"
-        
-        # Tokenize the full field
-        tokens = self.tokenizer.encode(full_text, add_special_tokens=False)
-        
-        # Extract only the field tokens (skip the prefix tokens that match state machine output)
-        # The state machine generates "field_name:" (no space), so we need to match that
-        prefix_for_matching = field_name + ":"
-        prefix_tokens = self.tokenizer.encode(prefix_for_matching, add_special_tokens=False)
-        
-        # Find where prefix ends in full tokens
-        if len(tokens) >= len(prefix_tokens) and tokens[:len(prefix_tokens)] == prefix_tokens:
-            # Return tokens after prefix (field value + newline)
-            return tokens[len(prefix_tokens):]
-        else:
-            # Fallback: return all tokens (shouldn't happen if tokenization is consistent)
-            if self.debug:
-                logger.warning(f"Could not match prefix tokens for field {field_name}, using all tokens")
-            return tokens
     
     def _process_single_sequence(
         self,

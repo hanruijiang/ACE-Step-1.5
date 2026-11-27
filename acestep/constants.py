@@ -75,42 +75,6 @@ VALID_TIME_SIGNATURES = [2, 3, 4, 6]
 # on top of cover/cover-nofsq via ``GenerationParams.flow_edit_morph``.
 TASK_TYPES = ["text2music", "repaint", "cover", "cover-nofsq", "extract", "lego", "complete"]
 
-# Task types available for turbo models (optimized subset for speed)
-# - text2music: Generate from text descriptions
-# - repaint: Selective audio editing/regeneration
-# - cover: Style transfer using reference audio
-TASK_TYPES_TURBO = ["text2music", "repaint", "cover", "cover-nofsq"]
-
-# Task types available for base models (full feature set)
-# Additional tasks requiring more computational resources:
-# - extract: Separate individual tracks/stems from audio
-# - lego: Multi-track generation (add layers)
-# - complete: Automatic completion of partial audio
-TASK_TYPES_BASE = ["text2music", "repaint", "cover", "cover-nofsq", "extract", "lego", "complete"]
-
-
-# ==============================================================================
-# Generation Mode Constants (UI-level modes that map to task types)
-# ==============================================================================
-
-# Default modes for turbo and SFT models (restricted set)
-GENERATION_MODES_TURBO = ["Simple", "Custom", "Remix", "Repaint"]
-
-# Extended modes for pure base models only — adds Extract/Lego/Complete
-GENERATION_MODES_BASE = ["Simple", "Custom", "Remix", "Repaint", "Extract", "Lego", "Complete"]
-
-# Mapping from generation mode to task_type value
-MODE_TO_TASK_TYPE = {
-    "Simple": "text2music",
-    "Custom": "text2music",
-    "Remix": "cover",
-    "Repaint": "repaint",
-    "Extract": "extract",
-    "Lego": "lego",
-    "Complete": "complete",
-}
-
-
 # ==============================================================================
 # Instruction Constants
 # ==============================================================================
@@ -138,22 +102,6 @@ TASK_INSTRUCTIONS = {
 }
 
 
-# ==============================================================================
-# Track/Instrument Constants
-# ==============================================================================
-
-# Supported instrumental track types for multi-track generation and extraction
-# Organized by instrument families for logical grouping:
-# - Wind instruments: woodwinds, brass
-# - Electronic: fx (effects), synth (synthesizer)  
-# - String instruments: strings, guitar, bass
-# - Rhythm section: percussion, drums, keyboard
-# - Vocals: backing_vocals, vocals (lead vocals)
-TRACK_NAMES = [
-    "woodwinds", "brass", "fx", "synth", "strings", "percussion",
-    "keyboard", "guitar", "bass", "drums", "backing_vocals", "vocals"
-]
-
 # Template for SFT (Supervised Fine-Tuning) model prompts
 # Used to format inputs for the language model with instruction, caption, and metadata
 SFT_GEN_PROMPT = """# Instruction
@@ -165,34 +113,4 @@ SFT_GEN_PROMPT = """# Instruction
 # Metas
 {}<|endoftext|>
 """
-
-
-# ==============================================================================
-# GPU Memory Configuration Constants
-# ==============================================================================
-
-# GPU tier thresholds (in GB)
-GPU_TIER_THRESHOLDS = {
-    "tier1": 4,    # <= 4GB
-    "tier2": 6,    # 4-6GB
-    "tier3": 8,    # 6-8GB
-    "tier4": 12,   # 8-12GB
-    "tier5": 16,   # 12-16GB
-    "tier6": 24,   # 16-24GB
-    # "unlimited" for >= 24GB
-}
-
-# LM model memory requirements (in GB)
-LM_MODEL_MEMORY_GB = {
-    "0.6B": 3.0,
-    "1.7B": 8.0,
-    "4B": 12.0,
-}
-
-# LM model names mapping
-LM_MODEL_NAMES = {
-    "0.6B": "acestep-5Hz-lm-0.6B",
-    "1.7B": "acestep-5Hz-lm-1.7B",
-    "4B": "acestep-5Hz-lm-4B",
-}
 

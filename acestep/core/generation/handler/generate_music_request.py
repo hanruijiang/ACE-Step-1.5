@@ -142,7 +142,7 @@ class GenerateMusicRequestMixin:
             if src_audio is not None:
                 logger.info("[generate_music] text2music task does not use src_audio, ignoring")
         elif task_type == "text2music" and flow_edit_morph:
-            # Treat empty string / empty list as missing too — gradio
+            # Treat empty strings and lists as missing inputs.
             # occasionally hands ``""`` instead of ``None`` for cleared
             # components.
             src_audio_missing = (

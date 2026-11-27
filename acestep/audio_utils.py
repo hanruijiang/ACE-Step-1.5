@@ -8,7 +8,6 @@ Independent audio file operations outside of handler, supporting:
 
 
 import json
-import os
 import subprocess
 import hashlib
 import tempfile
