@@ -9,7 +9,6 @@ import numpy as np
 
 from acestep.inference import (
     _load_cached_repaint_source,
-    _load_cached_repaint_source_latents,
     _resample_matching_source_seeds,
 )
 
@@ -20,7 +19,7 @@ class RepaintCacheLoadTests(unittest.TestCase):
     def test_missing_sidecar_returns_none(self):
         """Uploaded audio without a generated sidecar should use the normal path."""
         with tempfile.TemporaryDirectory() as tmp:
-            self.assertIsNone(_load_cached_repaint_source_latents(str(Path(tmp) / "upload.wav")))
+            self.assertIsNone(_load_cached_repaint_source(str(Path(tmp) / "upload.wav")))
 
     def test_loads_relative_latent_file_from_sidecar(self):
         """Generated sidecars should resolve relative cached latent paths."""
@@ -34,10 +33,10 @@ class RepaintCacheLoadTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            latents = _load_cached_repaint_source_latents(str(audio_path))
+            cached_source = _load_cached_repaint_source(str(audio_path))
 
-            self.assertIsNotNone(latents)
-            self.assertEqual((4, 3), tuple(latents.shape))
+            self.assertIsNotNone(cached_source)
+            self.assertEqual((4, 3), tuple(cached_source.latents.shape))
 
     def test_loads_source_seed_from_sidecar(self):
         """Generated-source cache should expose the original generation seed."""

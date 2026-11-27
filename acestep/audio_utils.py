@@ -3,8 +3,7 @@ Audio saving and transcoding utility module
 
 Independent audio file operations outside of handler, supporting:
 - Save audio tensor/numpy to files (default FLAC format, fast)
-- Format conversion (FLAC/WAV/MP3)
-- Batch processing
+- Export audio in supported file formats
 """
 
 
@@ -14,7 +13,7 @@ import subprocess
 import hashlib
 import tempfile
 from pathlib import Path
-from typing import Union, Optional, List
+from typing import Union, Optional
 import torch
 import numpy as np
 import torchaudio
@@ -287,115 +286,6 @@ class AudioSaver:
                      format="WAV" if format == "wav32" else format.upper(),
                      subtype="FLOAT" if format == "wav32" else None)
         return str(output_path)
-
-    def convert_audio(
-        self,
-        input_path: Union[str, Path],
-        output_path: Union[str, Path],
-        output_format: str,
-        remove_input: bool = False,
-        mp3_bitrate: Optional[str] = None,
-        mp3_sample_rate: Optional[int] = None,
-    ) -> str:
-        """
-        Convert audio format
-        
-        Args:
-            input_path: Input audio file path
-            output_path: Output audio file path
-            output_format: Target format ('flac', 'wav', 'mp3', 'wav32', 'opus', 'aac')
-            remove_input: Whether to delete input file
-            mp3_bitrate: Optional MP3 bitrate override (128k/192k/256k/320k)
-            mp3_sample_rate: Optional MP3 sample rate override (44100/48000)
-
-        Returns:
-            Output file path
-        """
-        input_path = Path(input_path)
-        output_path = Path(output_path)
-        
-        if not input_path.exists():
-            raise FileNotFoundError(f"Input file not found: {input_path}")
-        
-        # Load audio
-        samples, sample_rate = read_audio_file(input_path)
-        audio_tensor = torch.from_numpy(samples.T.copy())
-        if audio_tensor.ndim == 1:
-            audio_tensor = audio_tensor.unsqueeze(0)
-        
-        # Save as new format
-        output_path = self.save_audio(
-            audio_tensor,
-            output_path,
-            sample_rate=sample_rate,
-            format=output_format,
-            channels_first=True,
-            mp3_bitrate=mp3_bitrate,
-            mp3_sample_rate=mp3_sample_rate,
-        )
-        
-        # Delete input file if needed
-        if remove_input:
-            input_path.unlink()
-            logger.debug(f"[AudioSaver] Removed input file: {input_path}")
-        
-        return output_path
-    
-    def save_batch(
-        self,
-        audio_batch: Union[List[torch.Tensor], torch.Tensor],
-        output_dir: Union[str, Path],
-        file_prefix: str = "audio",
-        sample_rate: int = 48000,
-        format: Optional[str] = None,
-        channels_first: bool = True,
-        mp3_bitrate: Optional[str] = None,
-        mp3_sample_rate: Optional[int] = None,
-    ) -> List[str]:
-        """
-        Save audio batch
-        
-        Args:
-            audio_batch: Audio batch, List[tensor] or tensor [batch, channels, samples]
-            output_dir: Output directory
-            file_prefix: File prefix
-            sample_rate: Sample rate
-            format: Audio format
-            channels_first: Tensor format flag
-            mp3_bitrate: Optional MP3 bitrate override (128k/192k/256k/320k)
-            mp3_sample_rate: Optional MP3 sample rate override (44100/48000)
-
-        Returns:
-            List of saved file paths
-        """
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Process batch
-        if isinstance(audio_batch, torch.Tensor) and audio_batch.dim() == 3:
-            # [batch, channels, samples]
-            audio_list = [audio_batch[i] for i in range(audio_batch.shape[0])]
-        elif isinstance(audio_batch, list):
-            audio_list = audio_batch
-        else:
-            audio_list = [audio_batch]
-        
-        saved_paths = []
-        for i, audio in enumerate(audio_list):
-            output_path = output_dir / f"{file_prefix}_{i:04d}"
-            saved_path = self.save_audio(
-                audio,
-                output_path,
-                sample_rate=sample_rate,
-                format=format,
-                channels_first=channels_first,
-                mp3_bitrate=mp3_bitrate,
-                mp3_sample_rate=mp3_sample_rate,
-            )
-            saved_paths.append(saved_path)
-        
-        return saved_paths
-
 
 def generate_uuid_from_params(params_dict) -> str:
     """

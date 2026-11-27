@@ -24,7 +24,7 @@ class ModelAwareDcwDefaultTests(unittest.TestCase):
             seed=77,
         )
 
-        forwarded = host.calls["_run_generate_music_service_with_progress"]
+        forwarded = host.calls["_run_generate_music_service"]
         self.assertEqual(forwarded["inference_steps"], 50)
         self.assertFalse(forwarded["dcw_enabled"])
 
@@ -39,7 +39,7 @@ class ModelAwareDcwDefaultTests(unittest.TestCase):
             seed=77,
         )
 
-        self.assertTrue(host.calls["_run_generate_music_service_with_progress"]["dcw_enabled"])
+        self.assertTrue(host.calls["_run_generate_music_service"]["dcw_enabled"])
 
     def test_explicit_non_turbo_dcw_opt_in_is_preserved(self):
         """An explicit non-Turbo DCW choice should override the default."""
@@ -53,7 +53,7 @@ class ModelAwareDcwDefaultTests(unittest.TestCase):
             seed=77,
         )
 
-        self.assertTrue(host.calls["_run_generate_music_service_with_progress"]["dcw_enabled"])
+        self.assertTrue(host.calls["_run_generate_music_service"]["dcw_enabled"])
 
 
 if __name__ == "__main__":

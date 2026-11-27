@@ -436,12 +436,6 @@ def _load_cached_repaint_source(src_audio: Optional[str]) -> Optional[CachedRepa
     )
 
 
-def _load_cached_repaint_source_latents(src_audio: Optional[str]) -> Optional[torch.Tensor]:
-    """Load cached repaint source latents from a generated audio sidecar."""
-    cached_source = _load_cached_repaint_source(src_audio)
-    return cached_source.latents if cached_source is not None else None
-
-
 def generate_music(
     dit_handler,
     llm_handler,

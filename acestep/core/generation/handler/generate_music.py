@@ -405,7 +405,6 @@ class GenerateMusicMixin:
 
             pred_latents, time_costs = self._prepare_generate_music_decode_state(
                 outputs=outputs,
-
                 latent_shift=latent_shift,
                 latent_rescale=latent_rescale,
             )

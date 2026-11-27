@@ -38,7 +38,7 @@ _CHECKPOINT_TO_VARIANT: Dict[str, str] = {
     "acestep-v15-turbo-rl": "turbo",
     # XL (4B DiT) variants have their own model code under acestep/models/xl_*/
     "acestep-v15-xl-base": "xl_base",
-    "acestep-v15-xl-sft": "xl_sft",
+    "acestep-v15-xl-sft": "xl_base",  # Identical model implementation; separate weights
     "acestep-v15-xl-turbo": "xl_turbo",
 }
 

@@ -16,7 +16,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, List, Dict
 from loguru import logger
 
 
@@ -117,18 +117,6 @@ def cuda_supports_bfloat16(device_index: int | None = None) -> bool:
         return False
 
 
-def get_cuda_device_capability(device_index: int = 0) -> Optional[Tuple[int, int]]:
-    """Return the active CUDA device capability tuple when available."""
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            return torch.cuda.get_device_capability(device_index)
-    except Exception:
-        return None
-    return None
-
-
 # ===========================================================================
 # Empirical VRAM measurements (GB) -- model weights only, bf16 precision
 # These values should be calibrated using scripts/profile_vram.py
@@ -145,6 +133,18 @@ MODEL_VRAM = {
     "silence_latent": 0.01,  # Silence latent tensor
     "cuda_context": 0.5,  # CUDA context + driver overhead
 }
+
+# Conservative per-item diffusion activation estimates (GB).
+DIT_INFERENCE_VRAM_PER_BATCH = {
+    "turbo": 0.3,  # GB per batch item (no CFG)
+    "base": 0.6,  # GB per batch item (with CFG, 2x forward)
+    "xl_turbo": 0.5,  # GB per batch item, XL (4B) no CFG, larger activations
+    "xl_base": 1.0,  # GB per batch item, XL (4B) with CFG, 2x forward
+}
+
+# Safety margin to keep free for OS/driver/fragmentation (GB)
+VRAM_SAFETY_MARGIN_GB = 0.5
+
 
 def _has_path_token(token: str, path: str) -> bool:
     """Check if *token* appears as a delimited word in *path*.
@@ -216,8 +216,7 @@ class GPUConfig:
     # LM memory allocation (GB) for each model size
     lm_memory_gb: Dict[str, float]  # e.g., {"0.6B": 3, "1.7B": 8, "4B": 12}
 
-    # Save-memory mode: skip storing intermediate tensors in extra_outputs
-    # and disable auto_lrc / auto_score to reduce RAM usage.
+    # Save-memory mode: skip retaining generated latents in extra_outputs.
     # Controlled via ACESTEP_SAVE_MEMORY=1 environment variable.
     save_memory_mode: bool = False
 
@@ -738,27 +737,6 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
     return config
 
 
-def get_lm_model_size(model_path: str) -> str:
-    """
-    Extract LM model size from model path.
-
-    Args:
-        model_path: Model path string (e.g., "acestep-5Hz-lm-0.6B", "acestep-5Hz-lm-0.6B-v4-fix")
-
-    Returns:
-        Model size string: "0.6B", "1.7B", or "4B"
-    """
-    if "0.6B" in model_path:
-        return "0.6B"
-    elif "1.7B" in model_path:
-        return "1.7B"
-    elif "4B" in model_path:
-        return "4B"
-    else:
-        # Default to smallest model assumption
-        return "0.6B"
-
-
 def get_effective_free_vram_gb(device_index: int = 0) -> float:
     """
     Get the effective free VRAM in GB, accounting for PyTorch allocator cache and
@@ -838,22 +816,6 @@ def get_effective_free_vram_gb(device_index: int = 0) -> float:
         return 0.0
     except Exception:
         return 0.0
-
-
-# Human-readable tier labels for UI display
-GPU_TIER_LABELS = {
-    "tier1": "tier1 (≤4GB)",
-    "tier2": "tier2 (4-6GB)",
-    "tier3": "tier3 (6-8GB)",
-    "tier4": "tier4 (8-12GB)",
-    "tier5": "tier5 (12-16GB)",
-    "tier6a": "tier6a (16-20GB)",
-    "tier6b": "tier6b (20-24GB)",
-    "unlimited": "unlimited (≥24GB)",
-}
-
-# Ordered list of tier keys for dropdown
-GPU_TIER_CHOICES = list(GPU_TIER_LABELS.items())  # [(value, label), ...]
 
 
 # Global GPU config instance (initialized lazily)
