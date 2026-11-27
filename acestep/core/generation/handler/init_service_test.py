@@ -167,15 +167,6 @@ class InitServiceMixinTests(unittest.TestCase):
         self.assertIsInstance(moved, torch.nn.Parameter)
         self.assertTrue(moved.requires_grad)
 
-    def test_get_available_checkpoints_returns_expected_list(self):
-        """It returns checkpoint paths only when the checkpoints directory exists."""
-        host = _Host(project_root="K:/fake_root")
-        with patch("os.path.exists", return_value=False):
-            self.assertEqual(host.get_available_checkpoints(), [])
-
-        with patch("os.path.exists", return_value=True):
-            self.assertEqual(host.get_available_checkpoints(), [str(Path("K:/fake_root").resolve() / "checkpoints")])
-
     def test_get_available_acestep_v15_models_filters_and_sorts(self):
         """It filters to acestep-v15 directories and returns sorted model names."""
         host = _Host(project_root="K:/fake_root")

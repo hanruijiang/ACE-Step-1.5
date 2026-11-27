@@ -45,7 +45,7 @@ Set `checkpoint_dir` in TOML or `ACESTEP_CHECKPOINTS_DIR` to store checkpoints o
 ```bash
 uv run python -m compileall -q cli.py acestep
 uv run python cli.py --help
-uv run python -m unittest acestep.cli_smoke_test
+uv run pytest -q
 ```
 
 Model generation requires the appropriate hardware, checkpoints, and PyTorch dependencies. Automatic Hugging Face downloads fetch only required components; the explicit download command can fetch the complete model set.

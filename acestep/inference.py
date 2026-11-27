@@ -211,7 +211,6 @@ class GenerationConfig:
     
     Attributes:
         batch_size: Number of audio samples to generate
-        allow_lm_batch: Whether to allow batch processing in LM
         use_random_seed: Whether to use random seed
         seeds: Seed(s) for batch generation. Can be:
             - None: Use random seeds (when use_random_seed=True) or params.seed (when use_random_seed=False)
@@ -224,7 +223,6 @@ class GenerationConfig:
         mp3_sample_rate: MP3 output sample rate used when audio_format="mp3". Default: 48000
     """
     batch_size: int = 2
-    allow_lm_batch: bool = False
     use_random_seed: bool = True
     seeds: Optional[List[int]] = None
     lm_batch_chunk_size: int = 8

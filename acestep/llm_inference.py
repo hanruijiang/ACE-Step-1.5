@@ -80,29 +80,6 @@ class LLMHandler:
             if hasattr(torch.mps, "empty_cache"):
                 torch.mps.empty_cache()
 
-    def unload(self) -> None:
-        """Release LM weights/tokenizer and clear caches to free memory."""
-        try:
-            self.llm = None
-            self.llm_tokenizer = None
-            self.constrained_processor = None
-            self.llm_initialized = False
-            self.llm_backend = None
-            gc.collect()
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                torch.cuda.synchronize()
-            elif hasattr(torch, "mps") and torch.backends.mps.is_available():
-                if hasattr(torch.mps, "synchronize"):
-                    torch.mps.synchronize()
-                if hasattr(torch.mps, "empty_cache"):
-                    torch.mps.empty_cache()
-            elif hasattr(torch, "xpu") and torch.xpu.is_available():
-                torch.xpu.empty_cache()
-                torch.xpu.synchronize()
-        except Exception:
-            pass
-
     def _get_checkpoint_dir(self) -> str:
         """Get checkpoint directory via the shared resolver."""
         if getattr(self, "checkpoint_dir", None):

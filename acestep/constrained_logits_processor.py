@@ -1246,43 +1246,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         
         return result
     
-    def _get_allowed_digit_tokens(self, min_val: int, max_val: int) -> List[int]:
-        """
-        Get allowed digit tokens based on accumulated value and range constraints.
-        Uses early-blocking to prevent out-of-range values.
-        """
-        if not self.accumulated_value:
-            # First digit: determine valid starting digits
-            allowed_digits = set()
-            for v in range(min_val, max_val + 1):
-                allowed_digits.add(int(str(v)[0]))
-            return [self.digit_tokens[d] for d in allowed_digits if d in self.digit_tokens]
-        
-        current = int(self.accumulated_value)
-        allowed = []
-        
-        for d in range(10):
-            new_value = int(self.accumulated_value + str(d))
-            # Check if this digit could lead to a valid final value
-            # A digit is valid if:
-            # 1. new_value <= max_val (not already exceeded)
-            # 2. new_value could potentially reach >= min_val
-            #    (i.e., new_value * 10^k >= min_val for some k >= 0)
-            
-            if new_value > max_val:
-                continue  # Already exceeded max
-            
-            # Check if we can still reach min_val
-            # If new_value is already >= min_val, it's valid
-            # If new_value < min_val, we need more digits, but new_value * 10 must not exceed max
-            if new_value >= min_val:
-                allowed.append(d)
-            elif new_value * 10 <= max_val:
-                # Can add more digits
-                allowed.append(d)
-        
-        return [self.digit_tokens[d] for d in allowed if d in self.digit_tokens]
-    
     def _get_allowed_numeric_tokens(self, prefix_tree: Dict[Tuple[int, ...], Set[int]]) -> List[int]:
         """
         Get allowed tokens for numeric field using the precomputed prefix tree.

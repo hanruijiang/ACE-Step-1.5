@@ -526,7 +526,6 @@ def _apply_optional_defaults(args, params_defaults: GenerationParams, config_def
         "use_cot_language": params_defaults.use_cot_language,
         "use_constrained_decoding": params_defaults.use_constrained_decoding,
         "batch_size": config_defaults.batch_size,
-        "allow_lm_batch": config_defaults.allow_lm_batch,
         "use_random_seed": config_defaults.use_random_seed,
         "seeds": config_defaults.seeds,
         "lm_batch_chunk_size": config_defaults.lm_batch_chunk_size,
@@ -922,7 +921,6 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
                     args.seeds = [int(s) for s in seeds]
                 except ValueError:
                     print("Invalid seeds input. Ignoring custom seeds.")
-            args.allow_lm_batch = _prompt_bool("Allow LM batch processing", args.allow_lm_batch)
             args.lm_batch_chunk_size = _prompt_int("LM batch chunk size", args.lm_batch_chunk_size, min_value=1)
             args.constrained_decoding_debug = _prompt_bool("Constrained decoding debug", args.constrained_decoding_debug)
         else:
@@ -1127,7 +1125,6 @@ def main():
         "batch_size": default_batch_size,
         "seeds": None,
         "use_random_seed": config_defaults.use_random_seed,
-        "allow_lm_batch": config_defaults.allow_lm_batch,
         "lm_batch_chunk_size": config_defaults.lm_batch_chunk_size,
         "constrained_decoding_debug": config_defaults.constrained_decoding_debug,
         "audio_codes": "",
@@ -1751,7 +1748,6 @@ def main():
 
     config = GenerationConfig(
         batch_size=args.batch_size,
-        allow_lm_batch=args.allow_lm_batch,
         use_random_seed=args.use_random_seed,
         seeds=args.seeds,
         lm_batch_chunk_size=args.lm_batch_chunk_size,
@@ -1883,9 +1879,8 @@ def main():
 
             if not lm_result.get("success", False):
                 error_msg = lm_result.get("error", "Unknown LM error")
-                print(f"\n❌ Generation failed: {error_msg}")
-                print(f"   Status: {lm_result.get('error', '')}")
-                return
+                print(f"Generation failed: {error_msg}", file=sys.stderr)
+                sys.exit(1)
 
             if actual_batch_size > 1:
                 lm_metadata = (lm_result.get("metadata") or [{}])[0]

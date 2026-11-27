@@ -207,8 +207,6 @@ def check_ace_step_env():
         'MAX_CUDA_VRAM',
         'HSA_OVERRIDE_GFX_VERSION',
         'MIOPEN_FIND_MODE',
-        'TORCH_COMPILE_BACKEND',
-        'ACESTEP_LM_BACKEND',
     ]
     
     found_any = False

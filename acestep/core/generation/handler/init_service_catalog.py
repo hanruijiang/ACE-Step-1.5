@@ -34,13 +34,6 @@ class InitServiceCatalogMixin:
         from acestep.model_downloader import get_checkpoints_dir
         return str(get_checkpoints_dir(getattr(self, "checkpoint_dir", None), project_root=self._get_project_root()))
 
-    def get_available_checkpoints(self) -> List[str]:
-        """Return available checkpoint directory paths under the project root."""
-        checkpoint_dir = self._resolve_checkpoint_dir()
-        if os.path.exists(checkpoint_dir):
-            return [checkpoint_dir]
-        return []
-
     def get_available_acestep_v15_models(self) -> List[str]:
         """Scan and return all model directory names starting with ``acestep-v15-``."""
         checkpoint_dir = self._resolve_checkpoint_dir()

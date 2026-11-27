@@ -308,20 +308,6 @@ def check_model_exists(model_name: str, checkpoints_dir: Optional[Path] = None) 
     return True
 
 
-def list_available_models() -> Dict[str, str]:
-    """
-    List all available models for download.
-    
-    Returns:
-        Dictionary mapping local names to HuggingFace repo IDs.
-    """
-    models = {
-        "main": MAIN_MODEL_REPO,
-        **SUBMODEL_REGISTRY
-    }
-    return models
-
-
 def download_main_model(
     checkpoints_dir: Optional[Path] = None,
     force: bool = False,
@@ -461,36 +447,6 @@ def download_all_models(
             all_success = False
     
     return all_success, messages
-
-
-def ensure_main_model(
-    checkpoints_dir: Optional[Path] = None,
-    token: Optional[str] = None,
-) -> Tuple[bool, str]:
-    """
-    Ensure the main model is available, downloading if necessary.
-
-    This function is designed to be called during initialization.
-    It will only download if the model doesn't exist.
-
-    Args:
-        checkpoints_dir: Custom checkpoints directory (optional)
-        token: HuggingFace token for private repos (optional)
-
-    Returns:
-        Tuple of (success, message)
-    """
-    if checkpoints_dir is None:
-        checkpoints_dir = get_checkpoints_dir()
-
-    if check_main_model_exists(checkpoints_dir):
-        return True, "Main model is available"
-
-    print("\n" + "=" * 60)
-    print("Main model not found. Starting automatic download...")
-    print("=" * 60 + "\n")
-
-    return download_main_model(checkpoints_dir, token=token)
 
 
 def ensure_main_component(
