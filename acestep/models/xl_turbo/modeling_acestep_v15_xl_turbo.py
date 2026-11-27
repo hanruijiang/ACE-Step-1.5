@@ -24,7 +24,6 @@ from einops import rearrange
 
 # Transformers imports (sorted by submodule, then alphabetically)
 from transformers.cache_utils import Cache, DynamicCache, EncoderDecoderCache
-from transformers.modeling_attn_mask_utils import _prepare_4d_causal_attention_mask
 from transformers.modeling_flash_attention_utils import FlashAttentionKwargs
 from transformers.modeling_layers import GradientCheckpointingLayer
 from transformers.modeling_outputs import BaseModelOutput
@@ -47,9 +46,7 @@ try:
 except ImportError:
     from configuration_acestep_v15 import AceStepConfig
 
-# DCW (Differential Correction in Wavelet domain) — CVPR 2026.
-# Opt-in sampler-side correction for SNR-t bias; see the `dcw_*` kwargs
-# on `generate_audio` and docs/en/DCW.md for details.
+# Differential correction in wavelet domain (DCW).
 from acestep.models.common.dcw_correction import DCWCorrector
 
 

@@ -1,10 +1,8 @@
 """VAE encode orchestration helpers for tiled audio-to-latent conversion."""
 
 import math
-from typing import Optional
 
 import torch
-from loguru import logger
 
 from acestep.gpu_config import get_gpu_memory_gb
 
