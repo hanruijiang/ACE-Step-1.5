@@ -521,8 +521,6 @@ class AceStepPreTrainedModel(PreTrainedModel):
     supports_gradient_checkpointing = True
     _no_split_modules = ["AceStepEncoderLayer", "AceStepDiTLayer"]
     _skip_keys_device_placement = ["past_key_values"]
-    _supports_flash_attn_3 = True
-    _supports_flash_attn_2 = True
     _supports_sdpa = True
     _supports_flex_attn = True
     _supports_cache_class = True
@@ -608,57 +606,35 @@ class AceStepLyricEncoder(AceStepPreTrainedModel):
         dtype = inputs_embeds.dtype
         device = inputs_embeds.device
 
-        # 判断是否使用 Flash Attention 2
-        is_flash_attn = (self.config._attn_implementation == "flash_attention_2")
-
         # 初始化 Mask 变量
         full_attn_mask = None
         sliding_attn_mask = None
 
-        if is_flash_attn:
-            # -------------------------------------------------------
-            # 场景 A: Flash Attention 模式
-            # -------------------------------------------------------
-            # FA 不需要 4D Mask。
-            # 如果有 padding mask (attention_mask [B, L])，直接传给它即可。
-            # 如果没有 padding mask，传 None。
-            # 滑动窗口逻辑由 Layer 内部传给 FA kernel 的 sliding_window 参数控制。
-            full_attn_mask = attention_mask
+        # SDPA and eager attention masks.
+        # 必须手动生成 4D Mask [B, 1, L, L]
 
-            # 这里的逻辑是：如果配置启用了滑动窗口，FA 模式下我们也只需要传基础的 padding mask
-            # Layer 会自己决定是否调用带 sliding window 的 kernel
-            sliding_attn_mask = attention_mask if self.config.use_sliding_window else None
+        # 1. Full Attention (Bidirectional, Global)
+        full_attn_mask = create_4d_mask(
+            seq_len=seq_len,
+            dtype=dtype,
+            device=device,
+            attention_mask=attention_mask,     # [B, L]
+            sliding_window=None,
+            is_sliding_window=False,
+            is_causal=False                    # <--- 关键：双向注意力
+        )
 
-        else:
-            # -------------------------------------------------------
-            # 场景 B: CPU / Mac / SDPA (Eager 模式)
-            # -------------------------------------------------------
-            # 必须手动生成 4D Mask [B, 1, L, L]
-
-            # 1. Full Attention (Bidirectional, Global)
-            # 对应原来的 create_causal_mask + bidirectional
-            full_attn_mask = create_4d_mask(
+        # 2. Sliding Attention (Bidirectional, Local)
+        if self.config.use_sliding_window:
+            sliding_attn_mask = create_4d_mask(
                 seq_len=seq_len,
                 dtype=dtype,
                 device=device,
-                attention_mask=attention_mask,     # [B, L]
-                sliding_window=None,
-                is_sliding_window=False,
-                is_causal=False                    # <--- 关键：双向注意力
+                attention_mask=attention_mask, # [B, L]
+                sliding_window=self.config.sliding_window,
+                is_sliding_window=True,        # <--- 开启滑动窗口
+                is_causal=False                # <--- 关键：双向注意力
             )
-
-            # 2. Sliding Attention (Bidirectional, Local)
-            # 对应原来的 create_sliding_window... + bidirectional
-            if self.config.use_sliding_window:
-                sliding_attn_mask = create_4d_mask(
-                    seq_len=seq_len,
-                    dtype=dtype,
-                    device=device,
-                    attention_mask=attention_mask, # [B, L]
-                    sliding_window=self.config.sliding_window,
-                    is_sliding_window=True,        # <--- 开启滑动窗口
-                    is_causal=False                # <--- 关键：双向注意力
-                )
 
         # 构建 Mapping
         self_attn_mask_mapping = {
@@ -758,57 +734,35 @@ class AttentionPooler(AceStepPreTrainedModel):
         dtype = x.dtype
         device = x.device
 
-        # 判断是否使用 Flash Attention 2
-        is_flash_attn = (self.config._attn_implementation == "flash_attention_2")
-
         # 初始化 Mask 变量
         full_attn_mask = None
         sliding_attn_mask = None
 
-        if is_flash_attn:
-            # -------------------------------------------------------
-            # 场景 A: Flash Attention 模式
-            # -------------------------------------------------------
-            # FA 不需要 4D Mask。
-            # 如果有 padding mask (attention_mask [B, L])，直接传给它即可。
-            # 如果没有 padding mask，传 None。
-            # 滑动窗口逻辑由 Layer 内部传给 FA kernel 的 sliding_window 参数控制。
-            full_attn_mask = attention_mask
+        # SDPA and eager attention masks.
+        # 必须手动生成 4D Mask [B, 1, L, L]
 
-            # 这里的逻辑是：如果配置启用了滑动窗口，FA 模式下我们也只需要传基础的 padding mask
-            # Layer 会自己决定是否调用带 sliding window 的 kernel
-            sliding_attn_mask = attention_mask if self.config.use_sliding_window else None
+        # 1. Full Attention (Bidirectional, Global)
+        full_attn_mask = create_4d_mask(
+            seq_len=seq_len,
+            dtype=dtype,
+            device=device,
+            attention_mask=attention_mask,     # [B, L]
+            sliding_window=None,
+            is_sliding_window=False,
+            is_causal=False                    # <--- 关键：双向注意力
+        )
 
-        else:
-            # -------------------------------------------------------
-            # 场景 B: CPU / Mac / SDPA (Eager 模式)
-            # -------------------------------------------------------
-            # 必须手动生成 4D Mask [B, 1, L, L]
-
-            # 1. Full Attention (Bidirectional, Global)
-            # 对应原来的 create_causal_mask + bidirectional
-            full_attn_mask = create_4d_mask(
+        # 2. Sliding Attention (Bidirectional, Local)
+        if self.config.use_sliding_window:
+            sliding_attn_mask = create_4d_mask(
                 seq_len=seq_len,
                 dtype=dtype,
                 device=device,
-                attention_mask=attention_mask,     # [B, L]
-                sliding_window=None,
-                is_sliding_window=False,
-                is_causal=False                    # <--- 关键：双向注意力
+                attention_mask=attention_mask, # [B, L]
+                sliding_window=self.config.sliding_window,
+                is_sliding_window=True,        # <--- 开启滑动窗口
+                is_causal=False                # <--- 关键：双向注意力
             )
-
-            # 2. Sliding Attention (Bidirectional, Local)
-            # 对应原来的 create_sliding_window... + bidirectional
-            if self.config.use_sliding_window:
-                sliding_attn_mask = create_4d_mask(
-                    seq_len=seq_len,
-                    dtype=dtype,
-                    device=device,
-                    attention_mask=attention_mask, # [B, L]
-                    sliding_window=self.config.sliding_window,
-                    is_sliding_window=True,        # <--- 开启滑动窗口
-                    is_causal=False                # <--- 关键：双向注意力
-                )
 
         # 构建 Mapping
         self_attn_mask_mapping = {
@@ -893,57 +847,35 @@ class AudioTokenDetokenizer(AceStepPreTrainedModel):
         dtype = x.dtype
         device = x.device
 
-        # 判断是否使用 Flash Attention 2
-        is_flash_attn = (self.config._attn_implementation == "flash_attention_2")
-
         # 初始化 Mask 变量
         full_attn_mask = None
         sliding_attn_mask = None
 
-        if is_flash_attn:
-            # -------------------------------------------------------
-            # 场景 A: Flash Attention 模式
-            # -------------------------------------------------------
-            # FA 不需要 4D Mask。
-            # 如果有 padding mask (attention_mask [B, L])，直接传给它即可。
-            # 如果没有 padding mask，传 None。
-            # 滑动窗口逻辑由 Layer 内部传给 FA kernel 的 sliding_window 参数控制。
-            full_attn_mask = attention_mask
+        # SDPA and eager attention masks.
+        # 必须手动生成 4D Mask [B, 1, L, L]
 
-            # 这里的逻辑是：如果配置启用了滑动窗口，FA 模式下我们也只需要传基础的 padding mask
-            # Layer 会自己决定是否调用带 sliding window 的 kernel
-            sliding_attn_mask = attention_mask if self.config.use_sliding_window else None
+        # 1. Full Attention (Bidirectional, Global)
+        full_attn_mask = create_4d_mask(
+            seq_len=seq_len,
+            dtype=dtype,
+            device=device,
+            attention_mask=attention_mask,     # [B, L]
+            sliding_window=None,
+            is_sliding_window=False,
+            is_causal=False                    # <--- 关键：双向注意力
+        )
 
-        else:
-            # -------------------------------------------------------
-            # 场景 B: CPU / Mac / SDPA (Eager 模式)
-            # -------------------------------------------------------
-            # 必须手动生成 4D Mask [B, 1, L, L]
-
-            # 1. Full Attention (Bidirectional, Global)
-            # 对应原来的 create_causal_mask + bidirectional
-            full_attn_mask = create_4d_mask(
+        # 2. Sliding Attention (Bidirectional, Local)
+        if self.config.use_sliding_window:
+            sliding_attn_mask = create_4d_mask(
                 seq_len=seq_len,
                 dtype=dtype,
                 device=device,
-                attention_mask=attention_mask,     # [B, L]
-                sliding_window=None,
-                is_sliding_window=False,
-                is_causal=False                    # <--- 关键：双向注意力
+                attention_mask=attention_mask, # [B, L]
+                sliding_window=self.config.sliding_window,
+                is_sliding_window=True,        # <--- 开启滑动窗口
+                is_causal=False                # <--- 关键：双向注意力
             )
-
-            # 2. Sliding Attention (Bidirectional, Local)
-            # 对应原来的 create_sliding_window... + bidirectional
-            if self.config.use_sliding_window:
-                sliding_attn_mask = create_4d_mask(
-                    seq_len=seq_len,
-                    dtype=dtype,
-                    device=device,
-                    attention_mask=attention_mask, # [B, L]
-                    sliding_window=self.config.sliding_window,
-                    is_sliding_window=True,        # <--- 开启滑动窗口
-                    is_causal=False                # <--- 关键：双向注意力
-                )
 
         # 构建 Mapping
         self_attn_mask_mapping = {
@@ -1075,57 +1007,35 @@ class AceStepTimbreEncoder(AceStepPreTrainedModel):
         dtype = inputs_embeds.dtype
         device = inputs_embeds.device
 
-        # 判断是否使用 Flash Attention 2
-        is_flash_attn = (self.config._attn_implementation == "flash_attention_2")
-
         # 初始化 Mask 变量
         full_attn_mask = None
         sliding_attn_mask = None
 
-        if is_flash_attn:
-            # -------------------------------------------------------
-            # 场景 A: Flash Attention 模式
-            # -------------------------------------------------------
-            # FA 不需要 4D Mask。
-            # 如果有 padding mask (attention_mask [B, L])，直接传给它即可。
-            # 如果没有 padding mask，传 None。
-            # 滑动窗口逻辑由 Layer 内部传给 FA kernel 的 sliding_window 参数控制。
-            full_attn_mask = attention_mask
+        # SDPA and eager attention masks.
+        # 必须手动生成 4D Mask [B, 1, L, L]
 
-            # 这里的逻辑是：如果配置启用了滑动窗口，FA 模式下我们也只需要传基础的 padding mask
-            # Layer 会自己决定是否调用带 sliding window 的 kernel
-            sliding_attn_mask = attention_mask if self.config.use_sliding_window else None
+        # 1. Full Attention (Bidirectional, Global)
+        full_attn_mask = create_4d_mask(
+            seq_len=seq_len,
+            dtype=dtype,
+            device=device,
+            attention_mask=attention_mask,     # [B, L]
+            sliding_window=None,
+            is_sliding_window=False,
+            is_causal=False                    # <--- 关键：双向注意力
+        )
 
-        else:
-            # -------------------------------------------------------
-            # 场景 B: CPU / Mac / SDPA (Eager 模式)
-            # -------------------------------------------------------
-            # 必须手动生成 4D Mask [B, 1, L, L]
-
-            # 1. Full Attention (Bidirectional, Global)
-            # 对应原来的 create_causal_mask + bidirectional
-            full_attn_mask = create_4d_mask(
+        # 2. Sliding Attention (Bidirectional, Local)
+        if self.config.use_sliding_window:
+            sliding_attn_mask = create_4d_mask(
                 seq_len=seq_len,
                 dtype=dtype,
                 device=device,
-                attention_mask=attention_mask,     # [B, L]
-                sliding_window=None,
-                is_sliding_window=False,
-                is_causal=False                    # <--- 关键：双向注意力
+                attention_mask=attention_mask, # [B, L]
+                sliding_window=self.config.sliding_window,
+                is_sliding_window=True,        # <--- 开启滑动窗口
+                is_causal=False                # <--- 关键：双向注意力
             )
-
-            # 2. Sliding Attention (Bidirectional, Local)
-            # 对应原来的 create_sliding_window... + bidirectional
-            if self.config.use_sliding_window:
-                sliding_attn_mask = create_4d_mask(
-                    seq_len=seq_len,
-                    dtype=dtype,
-                    device=device,
-                    attention_mask=attention_mask, # [B, L]
-                    sliding_window=self.config.sliding_window,
-                    is_sliding_window=True,        # <--- 开启滑动窗口
-                    is_causal=False                # <--- 关键：双向注意力
-                )
 
         # 构建 Mapping
         self_attn_mask_mapping = {
@@ -1367,69 +1277,47 @@ class AceStepDiTModel(AceStepPreTrainedModel):
         dtype = hidden_states.dtype
         device = hidden_states.device
 
-        # 判断是否使用 Flash Attention 2
-        is_flash_attn = (self.config._attn_implementation == "flash_attention_2")
-
         # 初始化 Mask 变量
         full_attn_mask = None
         sliding_attn_mask = None
         encoder_attention_mask = None
         attention_mask = None
-        if is_flash_attn:
-            # -------------------------------------------------------
-            # 场景 A: Flash Attention 模式
-            # -------------------------------------------------------
-            # FA 不需要 4D Mask。
-            # 如果有 padding mask (attention_mask [B, L])，直接传给它即可。
-            # 如果没有 padding mask，传 None。
-            # 滑动窗口逻辑由 Layer 内部传给 FA kernel 的 sliding_window 参数控制。
-            full_attn_mask = attention_mask
+        # SDPA and eager attention masks.
+        # 必须手动生成 4D Mask [B, 1, L, L]
 
-            # 这里的逻辑是：如果配置启用了滑动窗口，FA 模式下我们也只需要传基础的 padding mask
-            # Layer 会自己决定是否调用带 sliding window 的 kernel
-            sliding_attn_mask = attention_mask if self.config.use_sliding_window else None
+        # 1. Full Attention (Bidirectional, Global)
+        full_attn_mask = create_4d_mask(
+            seq_len=seq_len,
+            dtype=dtype,
+            device=device,
+            attention_mask=attention_mask,     # [B, L]
+            sliding_window=None,
+            is_sliding_window=False,
+            is_causal=False                    # <--- 关键：双向注意力
+        )
+        max_len = max(seq_len, encoder_seq_len)
 
-        else:
-            # -------------------------------------------------------
-            # 场景 B: CPU / Mac / SDPA (Eager 模式)
-            # -------------------------------------------------------
-            # 必须手动生成 4D Mask [B, 1, L, L]
-
-            # 1. Full Attention (Bidirectional, Global)
-            # 对应原来的 create_causal_mask + bidirectional
-            full_attn_mask = create_4d_mask(
+        encoder_attention_mask = create_4d_mask(
+            seq_len=max_len,
+            dtype=dtype,
+            device=device,
+            attention_mask=attention_mask,     # [B, L]
+            sliding_window=None,
+            is_sliding_window=False,
+            is_causal=False                    # <--- 关键：双向注意力
+        )
+        encoder_attention_mask = encoder_attention_mask[:, :, :seq_len, :encoder_seq_len]
+        # 2. Sliding Attention (Bidirectional, Local)
+        if self.config.use_sliding_window:
+            sliding_attn_mask = create_4d_mask(
                 seq_len=seq_len,
                 dtype=dtype,
                 device=device,
-                attention_mask=attention_mask,     # [B, L]
-                sliding_window=None,
-                is_sliding_window=False,
-                is_causal=False                    # <--- 关键：双向注意力
+                attention_mask=attention_mask, # [B, L]
+                sliding_window=self.config.sliding_window,
+                is_sliding_window=True,        # <--- 开启滑动窗口
+                is_causal=False                # <--- 关键：双向注意力
             )
-            max_len = max(seq_len, encoder_seq_len)
-
-            encoder_attention_mask = create_4d_mask(
-                seq_len=max_len,
-                dtype=dtype,
-                device=device,
-                attention_mask=attention_mask,     # [B, L]
-                sliding_window=None,
-                is_sliding_window=False,
-                is_causal=False                    # <--- 关键：双向注意力
-            )
-            encoder_attention_mask = encoder_attention_mask[:, :, :seq_len, :encoder_seq_len]
-            # 2. Sliding Attention (Bidirectional, Local)
-            # 对应原来的 create_sliding_window... + bidirectional
-            if self.config.use_sliding_window:
-                sliding_attn_mask = create_4d_mask(
-                    seq_len=seq_len,
-                    dtype=dtype,
-                    device=device,
-                    attention_mask=attention_mask, # [B, L]
-                    sliding_window=self.config.sliding_window,
-                    is_sliding_window=True,        # <--- 开启滑动窗口
-                    is_causal=False                # <--- 关键：双向注意力
-                )
 
         # 构建 Mapping
         self_attn_mask_mapping = {
