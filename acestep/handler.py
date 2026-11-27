@@ -31,8 +31,6 @@ from acestep.core.generation.handler import (
     GenerateMusicRequestMixin,
     InitServiceMixin,
     IoAudioMixin,
-    LyricScoreMixin,
-    LyricTimestampMixin,
     MemoryUtilsMixin,
     MetadataMixin,
     MlxDitInitMixin,
@@ -73,8 +71,6 @@ class AceStepHandler(
     ConditioningTextMixin,
     IoAudioMixin,
     InitServiceMixin,
-    LyricScoreMixin,
-    LyricTimestampMixin,
     MemoryUtilsMixin,
     MetadataMixin,
     MlxDitInitMixin,
@@ -116,17 +112,9 @@ class AceStepHandler(
         # Sample rate
         self.sample_rate = 48000
         
-        # Reward model (temporarily disabled)
-        self.reward_model = None
-        
         # Batch size
         self.batch_size = 2
         
-        # Lyric alignment attention layers config.  Defaults to the 2B DiT
-        # mapping; overridden by the model's lyric_alignment_layers_config
-        # in AceStepConfig when present (see _sync_alignment_config).
-        from acestep.core.generation.handler.lyric_alignment_common import _DEFAULT_LAYERS_CONFIG
-        self.custom_layers_config = dict(_DEFAULT_LAYERS_CONFIG)
         self.offload_to_cpu = False
         self.offload_dit_to_cpu = False
         self.compiled = False
@@ -149,15 +137,6 @@ class AceStepHandler(
         # Populated during initialize_service, remains None if quantization is disabled
         self.quantization = None
         
-        # Disabled adapter state (generation metadata compatibility)
-        self.lora_loaded = False
-        self.use_lora = False
-        self.lora_scale = 1.0  # LoRA influence scale (0-1), mirrors active adapter's scale
-        self._base_decoder = None  # Backup of original decoder state_dict (CPU) for memory efficiency
-        self._active_loras = {}  # adapter_name -> scale (per-adapter)
-        self._lora_adapter_registry = {}  # adapter_name -> explicit scaling targets
-        self._lora_active_adapter = None
-
         # MLX DiT acceleration (macOS Apple Silicon only)
         self.mlx_decoder = None
         self.use_mlx_dit = False

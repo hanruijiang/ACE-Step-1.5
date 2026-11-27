@@ -24,7 +24,7 @@ from transformers.generation.logits_process import (
 )
 from acestep.llm_backend_compat import get_vllm_preflight_warning
 from acestep.constrained_logits_processor import MetadataConstrainedLogitsProcessor
-from acestep.constants import DEFAULT_LM_INSTRUCTION, DEFAULT_LM_UNDERSTAND_INSTRUCTION, DEFAULT_LM_INSPIRED_INSTRUCTION, DEFAULT_LM_REWRITE_INSTRUCTION, DURATION_MIN, DURATION_MAX
+from acestep.constants import DEFAULT_LM_INSTRUCTION, DEFAULT_LM_INSPIRED_INSTRUCTION, DEFAULT_LM_REWRITE_INSTRUCTION, DURATION_MIN, DURATION_MAX
 from acestep.gpu_config import get_lm_gpu_memory_ratio, get_gpu_memory_gb, get_lm_model_size, get_global_gpu_config
 
 # Minimum free VRAM (GB) required to attempt vLLM initialization.
@@ -73,14 +73,10 @@ class LLMHandler:
         # Shared constrained decoding processor
         self.constrained_processor: Optional[MetadataConstrainedLogitsProcessor] = None
 
-        # Shared HuggingFace model for perplexity calculation
-        self._hf_model_for_scoring = None
-        self._lm_full_model_path = None
         self._last_initialize_config = None
 
         # MLX model reference (used when llm_backend == "mlx")
         self._mlx_model = None
-        self._mlx_model_path = None
 
         # A/B toggle: when True, use the pre-fix prompt format for CFG uncond
         # (keeps caption+lyrics in uncond, closes the assistant turn with <|im_end|>
@@ -138,7 +134,6 @@ class LLMHandler:
             self.llm_initialized = False
             self.llm_backend = None
             self._mlx_model = None
-            self._mlx_model_path = None
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
@@ -592,7 +587,6 @@ class LLMHandler:
             full_lm_model_path = os.path.join(checkpoint_dir, lm_model_path)
             if not os.path.exists(full_lm_model_path):
                 return f"❌ 5Hz LM model not found at {full_lm_model_path}", False
-            self._lm_full_model_path = full_lm_model_path
             self._last_initialize_config = {
                 "checkpoint_dir": checkpoint_dir,
                 "lm_model_path": lm_model_path,
@@ -1801,154 +1795,6 @@ class LLMHandler:
         formatted += cot_for_prompt + "\n\n"
         return formatted
 
-    def build_formatted_prompt_for_understanding(
-        self,
-        audio_codes: str,
-        is_negative_prompt: bool = False,
-        negative_prompt: str = "NO USER INPUT"
-    ) -> str:
-        """
-        Build the chat-formatted prompt for audio understanding from codes.
-
-        This is the reverse of generation: given audio codes, generate metadata and lyrics.
-
-        Args:
-            audio_codes: Audio code string (e.g., "<|audio_code_123|><|audio_code_456|>...")
-            is_negative_prompt: If True, builds unconditional prompt for CFG
-            negative_prompt: Negative prompt for CFG (used when is_negative_prompt=True)
-
-        Returns:
-            Formatted prompt string
-
-        Example:
-            codes = "<|audio_code_18953|><|audio_code_13833|>..."
-            prompt = handler.build_formatted_prompt_for_understanding(codes)
-        """
-        if self.llm_tokenizer is None:
-            raise ValueError("LLM tokenizer is not initialized. Call initialize() first.")
-
-        # For understanding task, user provides audio codes
-        # Unconditional prompt uses negative_prompt or empty string
-        if is_negative_prompt:
-            user_content = negative_prompt if negative_prompt and negative_prompt.strip() else ""
-        else:
-            user_content = audio_codes
-
-        return self.llm_tokenizer.apply_chat_template(
-            [
-                {
-                    "role": "system",
-                    "content": f"# Instruction\n{DEFAULT_LM_UNDERSTAND_INSTRUCTION}\n\n"
-                },
-                {
-                    "role": "user",
-                    "content": user_content
-                },
-            ],
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-
-    def understand_audio_from_codes(
-        self,
-        audio_codes: str,
-        temperature: float = 0.3,
-        top_k: Optional[int] = None,
-        top_p: Optional[float] = None,
-        repetition_penalty: float = 1.0,
-        use_constrained_decoding: bool = True,
-        constrained_decoding_debug: bool = False,
-    ) -> Tuple[Dict[str, Any], str]:
-        """
-        Understand audio codes and generate metadata + lyrics.
-
-        This is the reverse of the normal generation flow:
-        - Input: Audio codes
-        - Output: Metadata (bpm, caption, duration, etc.) + Lyrics
-
-        Note: cfg_scale and negative_prompt are not supported in understand mode.
-
-        Args:
-            audio_codes: String of audio code tokens (e.g., "<|audio_code_123|><|audio_code_456|>...")
-            temperature: Sampling temperature for generation
-            top_k: Top-K sampling (None = disabled)
-            top_p: Top-P (nucleus) sampling (None = disabled)
-            repetition_penalty: Repetition penalty (1.0 = no penalty)
-            use_constrained_decoding: Whether to use FSM-based constrained decoding for metadata
-            constrained_decoding_debug: Whether to enable debug logging for constrained decoding
-
-        Returns:
-            Tuple of (metadata_dict, status_message)
-            metadata_dict contains:
-                - bpm: int or str
-                - caption: str
-                - duration: int or str
-                - keyscale: str
-                - language: str
-                - timesignature: str
-                - lyrics: str (extracted from output after </think>)
-
-        Example:
-            codes = "<|audio_code_18953|><|audio_code_13833|>..."
-            metadata, status = handler.understand_audio_from_codes(codes)
-            print(metadata['caption'])  # "A cinematic orchestral piece..."
-            print(metadata['lyrics'])   # "[Intro: ...]\\n..."
-        """
-        if not getattr(self, "llm_initialized", False):
-            return {}, "❌ 5Hz LM not initialized. Please initialize it first."
-
-        if not audio_codes or not audio_codes.strip():
-            return {}, "❌ No audio codes provided. Please paste audio codes first."
-
-        logger.info(f"Understanding audio codes (length: {len(audio_codes)} chars)")
-
-        # Build formatted prompt for understanding
-        formatted_prompt = self.build_formatted_prompt_for_understanding(audio_codes)
-        print(f"formatted_prompt: {formatted_prompt}")
-        # Generate using constrained decoding (understand phase)
-        # We want to generate metadata first (CoT), then lyrics (natural text)
-        # Note: cfg_scale and negative_prompt are not used in understand mode
-        output_text, status = self.generate_from_formatted_prompt(
-            formatted_prompt=formatted_prompt,
-            cfg={
-                "temperature": temperature,
-                "top_k": top_k,
-                "top_p": top_p,
-                "repetition_penalty": repetition_penalty,
-                "target_duration": None,  # No duration constraint for understanding
-                "user_metadata": None,  # No user metadata injection
-                "skip_caption": False,  # Generate caption
-                "skip_language": False,  # Generate language
-                "skip_genres": False,  # Generate genres
-                "generation_phase": "understand",  # Understanding phase: generate CoT metadata, then free-form lyrics
-                # Context for building unconditional prompt
-                "caption": "",
-                "lyrics": "",
-            },
-            use_constrained_decoding=use_constrained_decoding,
-            constrained_decoding_debug=constrained_decoding_debug,
-            stop_at_reasoning=False,  # Continue after </think> to generate lyrics
-        )
-
-        if not output_text:
-            return {}, status
-
-        # Parse metadata and extract lyrics
-        metadata, _ = self.parse_lm_output(output_text)
-
-        # Extract lyrics section (everything after </think>)
-        lyrics = self._extract_lyrics_from_output(output_text)
-        if lyrics:
-            metadata['lyrics'] = lyrics
-
-        logger.info(f"Understanding completed. Generated {len(metadata)} metadata fields")
-        if constrained_decoding_debug:
-            logger.debug(f"Generated metadata: {list(metadata.keys())}")
-            logger.debug(f"Output text preview: {output_text[:200]}...")
-
-        status_msg = f"✅ Understanding completed successfully\nGenerated fields: {', '.join(metadata.keys())}"
-        return metadata, status_msg
-
     def _extract_lyrics_from_output(self, output_text: str) -> str:
         """
         Extract lyrics section from LLM output.
@@ -2998,8 +2844,6 @@ class LLMHandler:
                 self._mlx_model = model
 
             mx.eval(self._mlx_model.parameters())
-            # Store model path for get_hf_model_for_scoring
-            self._mlx_model_path = model_path
 
             load_time = time.time() - start_time
             logger.info(f"MLX model loaded successfully in {load_time:.2f}s")
@@ -4155,101 +3999,3 @@ class LLMHandler:
                 torch.mps.empty_cache()
             offload_time = time.time() - start_time
             logger.info(f"Offloaded LLM to CPU in {offload_time:.4f}s")
-
-    def get_hf_model_for_scoring(self):
-        """
-        Get HuggingFace model for perplexity scoring.
-
-        For vllm backend, loads HuggingFace model from disk (weights are cached by transformers).
-        For pt backend, returns the existing model.
-        For mlx backend, loads HuggingFace model from disk (MLX model can't be used for torch scoring).
-
-        Returns:
-            HuggingFace model instance
-        """
-        if self.llm_backend == "pt":
-            # For PyTorch backend, directly return the model
-            return self.llm
-
-        elif self.llm_backend == "vllm":
-            # For vllm backend, load HuggingFace model from disk
-            # Note: transformers caches model weights, so this doesn't duplicate disk I/O
-            if self._hf_model_for_scoring is None:
-                logger.info("Loading HuggingFace model for scoring (from checkpoint)")
-
-                # Get model path from vllm config.  During PMI scoring the
-                # interactive vLLM runtime may be temporarily unloaded to free
-                # VRAM, so fall back to the saved initialization path.
-                model_runner = getattr(self.llm, "model_runner", None)
-                if model_runner is not None:
-                    model_path = model_runner.config.model
-                else:
-                    model_path = self._lm_full_model_path
-                if model_path is None:
-                    raise ValueError("vLLM model path is not available for scoring.")
-
-                # Load HuggingFace model from the same checkpoint
-                # This will load the original unfused weights
-                import time
-                start_time = time.time()
-                self._hf_model_for_scoring = AutoModelForCausalLM.from_pretrained(
-                    model_path,
-                    trust_remote_code=True,
-                    torch_dtype=self.dtype
-                )
-                load_time = time.time() - start_time
-                logger.info(f"HuggingFace model loaded in {load_time:.2f}s")
-
-                # When offload_to_cpu is enabled, keep the model on CPU to save
-                # VRAM.  The caller (_load_scoring_model_context in
-                # core/scoring/lm_score.py) will move it to the accelerator only
-                # for the duration of the forward pass.
-                if self.offload_to_cpu:
-                    self._hf_model_for_scoring.eval()
-                    logger.info("HuggingFace model for scoring kept on CPU (offload_to_cpu=True)")
-                else:
-                    if model_runner is not None:
-                        device = next(model_runner.model.parameters()).device
-                    else:
-                        device = self.device
-                    self._hf_model_for_scoring = self._hf_model_for_scoring.to(device)
-                    self._hf_model_for_scoring.eval()
-                    logger.info(f"HuggingFace model for scoring ready on {device}")
-
-            return self._hf_model_for_scoring
-
-        elif self.llm_backend == "mlx":
-            # For MLX backend, load HuggingFace model from disk for PyTorch scoring
-            if self._hf_model_for_scoring is None:
-                logger.info("Loading HuggingFace model for scoring (MLX backend, need PyTorch model)")
-
-                # Get model path from stored path
-                model_path = getattr(self, '_mlx_model_path', None)
-                if model_path is None:
-                    raise ValueError("MLX model path not stored. Cannot load HuggingFace model for scoring.")
-
-                import time
-                start_time = time.time()
-                self._hf_model_for_scoring = AutoModelForCausalLM.from_pretrained(
-                    model_path,
-                    trust_remote_code=True,
-                    torch_dtype=self.dtype
-                )
-                load_time = time.time() - start_time
-                logger.info(f"HuggingFace model loaded in {load_time:.2f}s")
-
-                # When offload_to_cpu is enabled, keep on CPU; the scoring
-                # context manager will move it to the accelerator as needed.
-                if self.offload_to_cpu:
-                    self._hf_model_for_scoring.eval()
-                    logger.info("HuggingFace model for scoring kept on CPU (offload_to_cpu=True)")
-                else:
-                    device = "mps" if hasattr(torch.backends, "mps") and torch.backends.mps.is_available() else "cpu"
-                    self._hf_model_for_scoring = self._hf_model_for_scoring.to(device)
-                    self._hf_model_for_scoring.eval()
-                    logger.info(f"HuggingFace model for scoring ready on {device}")
-
-            return self._hf_model_for_scoring
-
-        else:
-            raise ValueError(f"Unknown backend: {self.llm_backend}")

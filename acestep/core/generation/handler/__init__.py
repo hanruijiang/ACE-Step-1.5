@@ -15,8 +15,6 @@ from .generate_music_payload import GenerateMusicPayloadMixin
 from .generate_music_request import GenerateMusicRequestMixin
 from .init_service import InitServiceMixin
 from .io_audio import IoAudioMixin
-from .lyric_score import LyricScoreMixin
-from .lyric_timestamp import LyricTimestampMixin
 from .memory_utils import MemoryUtilsMixin
 from .metadata_utils import MetadataMixin
 from .mlx_dit_init import MlxDitInitMixin
@@ -52,8 +50,6 @@ __all__ = [
     "GenerateMusicRequestMixin",
     "InitServiceMixin",
     "IoAudioMixin",
-    "LyricScoreMixin",
-    "LyricTimestampMixin",
     "MemoryUtilsMixin",
     "MetadataMixin",
     "MlxDitInitMixin",

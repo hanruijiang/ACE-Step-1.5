@@ -118,7 +118,6 @@ MODE_TO_TASK_TYPE = {
 # Default instructions
 DEFAULT_DIT_INSTRUCTION = "Fill the audio semantic mask based on the given conditions:"
 DEFAULT_LM_INSTRUCTION = "Generate audio semantic tokens based on the given conditions:"
-DEFAULT_LM_UNDERSTAND_INSTRUCTION = "Understand the given musical conditions and describe the audio semantics accordingly:"
 DEFAULT_LM_INSPIRED_INSTRUCTION = "Expand the user's input into a more detailed and specific musical description:"
 DEFAULT_LM_REWRITE_INSTRUCTION = "Format the user's input into a more detailed and specific musical description:"
 
