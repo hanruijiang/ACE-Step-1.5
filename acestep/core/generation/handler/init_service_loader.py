@@ -37,9 +37,6 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
         target_device = str(getattr(self, "device", ""))
         if not target_device.startswith("cuda"):
             return
-        if self._cuda_supports_bool_argsort():
-            return
-
         model_module_name = getattr(self.model.__class__, "__module__", "")
         if not model_module_name:
             return
@@ -54,7 +51,9 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
             return
 
         original_pack_sequences = getattr(model_module, "pack_sequences", None)
-        if original_pack_sequences is None:
+        if original_pack_sequences is None or original_pack_sequences.__module__ == "acestep.models.common.modeling_layers":
+            return
+        if self._cuda_supports_bool_argsort():
             return
         if getattr(original_pack_sequences, "__acestep_bool_argsort_patched__", False):
             return
