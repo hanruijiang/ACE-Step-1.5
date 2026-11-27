@@ -84,22 +84,7 @@ def dispatch_flow_edit_overlay(
     src_text_am = src_text_am.to(device=device, dtype=dtype)
     src_lyric_am = src_lyric_am.to(device=device, dtype=dtype)
 
-    # Audio context for ``prepare_condition``: choose by task.
-    #
-    # text2music — force silence-context.  text2music's training
-    # distribution is (clean target, silence audio context).  Sharing
-    # the source audio's encoded latents (or LM codes derived from one
-    # prompt) as the context is OOD: the velocity head produces unstable
-    # predictions, V_delta integration accumulates into a near-zero
-    # latent, and VAE decode + auto-normalization amplifies the residual
-    # noise to full scale.  Verified empirically by a 4-way sweep
-    # (sft60, tb60, tb8w05, tb8s1) — every variant collapsed to peak
-    # ≈ 0.007 the moment the natural context was used.
-    #
-    # cover / cover-nofsq — keep payload's natural context.  The cover
-    # task IS trained on (clean target, LM-codes-derived audio context),
-    # so both branches share an in-distribution context and V_delta
-    # captures the text-only delta cleanly.
+    # Text-to-music uses silence context; cover tasks use source-audio context.
     if task_type == "text2music":
         sil = handler.silence_latent.to(device=device, dtype=dtype)
         available = sil.shape[1]
@@ -110,13 +95,7 @@ def dispatch_flow_edit_overlay(
             sil_slice = sil[0].repeat(repeats, 1)[:seq, :]
         ctx_input = sil_slice.unsqueeze(0).expand(bsz, seq, ch).contiguous()
         is_covers_arg = torch.zeros(bsz, dtype=torch.long, device=device)
-        # Drop the precomputed LM hints — they were generated from the
-        # user's caption/lyrics, not silence; even though is_covers=0
-        # leaves them unused in the where-clause, the tensor lingers in
-        # downstream paths and empirically collapses the latent (peak
-        # 0.007 in the user's repro).  Force ``prepare_condition`` to
-        # tokenize silence afresh, matching the no-codes case that
-        # produced peak 0.92.
+        # Tokenize the silence context instead of using LM hints.
         precomputed_lm_hints_arg = None
     else:
         ctx_input = real_src_latents

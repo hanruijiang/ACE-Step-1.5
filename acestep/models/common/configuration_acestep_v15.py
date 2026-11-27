@@ -225,7 +225,7 @@ class AceStepConfig(PretrainedConfig):
         self.lyric_alignment_layers_config = lyric_alignment_layers_config
         self.vocab_size = vocab_size
 
-        # Backward compatibility: ensure num_key_value_heads is set
+        # Default to multi-head attention when the KV head count is unset.
         if num_key_value_heads is None:
             num_key_value_heads = num_attention_heads
 
@@ -242,7 +242,7 @@ class AceStepConfig(PretrainedConfig):
         self.model_version = model_version
         
         # Validate rotary position embeddings parameters
-        # Backward compatibility: if there is a 'type' field, move it to 'rope_type'
+        # Normalize the RoPE type field.
         if self.rope_scaling is not None and "type" in self.rope_scaling:
             self.rope_scaling["rope_type"] = self.rope_scaling["type"]
         rope_config_validation(self)

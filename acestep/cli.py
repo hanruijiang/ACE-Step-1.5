@@ -5,6 +5,7 @@ import os
 import sys
 import shutil
 import toml
+import yaml
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -214,29 +215,16 @@ def _prompt_choice_from_list(
 
 
 def _edit_formatted_prompt_via_file(formatted_prompt: str, instruction_path: str) -> str:
-    """Write formatted prompt to file, wait for user edits, then read back."""
-    try:
-        with open(instruction_path, "w", encoding="utf-8") as f:
-            f.write(formatted_prompt)
-    except Exception as e:
-        print(f"WARNING: Failed to write {instruction_path}: {e}")
-        return formatted_prompt
-
-    print("\n--- Final Draft Saved ---")
-    print(f"Saved to {instruction_path}")
-    print("Edit the file now. Press Enter when ready to continue.")
+    """Write the prompt, wait for edits, and read the result."""
+    path = Path(instruction_path)
+    path.write_text(formatted_prompt, encoding="utf-8")
+    print(f"\nEdit {path}, then press Enter to continue.")
     input()
-
-    try:
-        with open(instruction_path, "r", encoding="utf-8") as f:
-            return f.read()
-    except Exception as e:
-        print(f"WARNING: Failed to read {instruction_path}: {e}")
-        return formatted_prompt
+    return path.read_text(encoding="utf-8")
 
 
 def _extract_caption_lyrics_from_formatted_prompt(formatted_prompt: str) -> Tuple[Optional[str], Optional[str]]:
-    """Best-effort extraction of caption/lyrics from a formatted prompt string."""
+    """Extract caption and lyrics from a formatted prompt."""
     matches = list(re.finditer(r"# Caption\n(.*?)\n+# Lyric\n(.*)", formatted_prompt, re.DOTALL))
     if not matches:
         return None, None
@@ -257,7 +245,7 @@ def _extract_caption_lyrics_from_formatted_prompt(formatted_prompt: str) -> Tupl
 
 
 def _extract_instruction_from_formatted_prompt(formatted_prompt: str) -> Optional[str]:
-    """Best-effort extraction of instruction text from a formatted prompt string."""
+    """Extract instruction text from a formatted prompt."""
     match = re.search(r"# Instruction\n(.*?)\n\n", formatted_prompt, re.DOTALL)
     if not match:
         return None
@@ -266,47 +254,29 @@ def _extract_instruction_from_formatted_prompt(formatted_prompt: str) -> Optiona
 
 
 def _extract_cot_metadata_from_formatted_prompt(formatted_prompt: str) -> dict:
-    """Best-effort extraction of COT metadata from a formatted prompt string,
-    supporting multi-line values.
-    """
-    matches = list(re.finditer(r"<think>\n(.*?)\n</think>", formatted_prompt, re.DOTALL))
+    """Read the final reasoning block as YAML metadata."""
+    matches = re.findall(r"<think>\s*(.*?)\s*</think>", formatted_prompt, re.DOTALL)
     if not matches:
         return {}
-    block = matches[-1].group(1)
-    metadata = {}
-    current_key = None
-    current_value_lines = []
-
-    for line in block.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        key_match = re.match(r"^(\w+):\s*(.*)", line)
-        if key_match:
-            if current_key:
-                metadata[current_key] = " ".join(current_value_lines).strip()
-
-            current_key = key_match.group(1).strip().lower()
-            current_value_lines = [key_match.group(2).strip()]
-        else:
-            if current_key:
-                current_value_lines.append(line)
-
-    if current_key and current_value_lines:
-        metadata[current_key] = " ".join(current_value_lines).strip()
-
+    metadata = yaml.safe_load(matches[-1]) or {}
+    if not isinstance(metadata, dict):
+        raise ValueError("The prompt's reasoning block must contain YAML metadata.")
+    for key in ("bpm", "duration"):
+        if key in metadata:
+            value = _parse_number(metadata[key])
+            if value is None or value <= 0:
+                metadata.pop(key)
+            else:
+                metadata[key] = int(value) if key == "bpm" else value
+    for key in ("caption", "genres", "keyscale", "language", "vocal_language", "timesignature"):
+        if metadata.get(key) is not None:
+            metadata[key] = str(metadata[key]).strip()
     return metadata
 
 
-def _parse_number(value: str) -> Optional[float]:
-    try:
-        match = re.search(r"[-+]?\d*\.?\d+", value)
-        if not match:
-            return None
-        return float(match.group(0))
-    except Exception:
-        return None
+def _parse_number(value) -> Optional[float]:
+    match = re.search(r"[-+]?\d*\.?\d+", str(value))
+    return float(match.group(0)) if match else None
 
 
 def _parse_timesteps_input(value) -> Optional[List[float]]:
@@ -348,19 +318,8 @@ def _make_prompt_editor(instruction_path: str, preloaded_prompt: Optional[str] =
             prompt, instruction_path
         )
         metadata = _extract_cot_metadata_from_formatted_prompt(edited)
-        for key in ("bpm", "duration"):
-            if key in metadata:
-                value = _parse_number(metadata[key])
-                if value is None or value <= 0:
-                    metadata.pop(key)
-                else:
-                    metadata[key] = int(value) if key == "bpm" else value
         original_metadata = _extract_cot_metadata_from_formatted_prompt(prompt)
-        overrides = {
-            key: value for key, value in metadata.items()
-            if str(value) != original_metadata.get(key)
-            and not (key in ("bpm", "duration") and value == _parse_number(original_metadata.get(key, "")))
-        }
+        overrides = {key: value for key, value in metadata.items() if value != original_metadata.get(key)}
         edits = {"metadata": metadata, "overrides": overrides}
         if edited != prompt:
             print("Using edited audio-token prompt.")
@@ -1723,11 +1682,12 @@ def main():
         print(f"Custom Seeds: {config.seeds}")
     print("---------------------------\n")
 
+    before_dit = None
     if log_level_upper in {"INFO", "DEBUG"}:
-        _print_dit_prompt(dit_handler, params)
+        before_dit = lambda final_params: _print_dit_prompt(dit_handler, final_params)
     result = generate_music(
         dit_handler, llm_handler, params, config,
-        save_dir=args.save_dir, prompt_editor=prompt_editor,
+        save_dir=args.save_dir, prompt_editor=prompt_editor, before_dit=before_dit,
     )
 
     # --- Process Results ---

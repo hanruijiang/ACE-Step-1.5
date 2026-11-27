@@ -16,14 +16,7 @@ class ConditioningTargetMixin:
     """
 
     def _get_silence_latent_slice(self, length: int) -> torch.Tensor:
-        """Return a silence-latent slice of exactly ``length`` frames.
-
-        When the pre-computed ``silence_latent`` tensor is shorter than
-        ``length``, it is tiled (repeated) along the time axis to cover
-        the needed span.  This prevents a silent shape mismatch that
-        previously occurred when ``audio_duration`` was null and the
-        generated code count exceeded the stored silence latent size.
-        """
+        """Return exactly ``length`` silence frames, repeating the latent if needed."""
         available = self.silence_latent.shape[1]
         if length <= available:
             return self.silence_latent[0, :length, :]

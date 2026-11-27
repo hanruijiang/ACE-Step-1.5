@@ -4,7 +4,6 @@ ACE-Step inference runtime.
 Shared music generation and audio editing functions used by the CLI.
 """
 
-import inspect
 import json
 import math
 import os
@@ -437,6 +436,7 @@ def generate_music(
     save_dir: Optional[str] = None,
     progress=None,
     prompt_editor=None,
+    before_dit=None,
 ) -> GenerationResult:
     """Generate music using ACE-Step model with optional LM reasoning.
     
@@ -808,16 +808,9 @@ def generate_music(
             "latent_rescale": params.latent_rescale,
             "progress": progress,
         }
-        supported_generate_keys = set(inspect.signature(dit_handler.generate_music).parameters.keys())
-        filtered_generate_kwargs = {
-            key: value for key, value in dit_generate_kwargs.items() if key in supported_generate_keys
-        }
-        dropped_generate_keys = sorted(set(dit_generate_kwargs.keys()) - supported_generate_keys)
-        if dropped_generate_keys:
-            logger.warning(
-                f"[generate_music] Skipping unsupported generate_music kwargs: {dropped_generate_keys}"
-            )
-        result = dit_handler.generate_music(**filtered_generate_kwargs)
+        if before_dit is not None:
+            before_dit(params)
+        result = dit_handler.generate_music(**dit_generate_kwargs)
 
         # Check if generation failed
         if not result.get("success", False):
@@ -848,12 +841,7 @@ def generate_music(
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
 
-        # Resolve per-sample retake seeds (handler returns a comma-joined string
-        # of the actually-used seeds when retake_variance > 0).  We thread these
-        # back into per-audio params so the UUID hash includes the seed that
-        # actually produced the output, not the (possibly None) caller input.
-        # Without this, repeated runs with retake_seed=None and a fixed main
-        # seed would collide on UUID even though the audio differs.
+        # Record the actual retake seeds in the output metadata.
         retake_seed_value_str = (dit_extra_outputs or {}).get("retake_seed_value", "") or ""
         retake_seeds_resolved = (
             [s.strip() for s in retake_seed_value_str.split(",") if s.strip()]

@@ -462,7 +462,6 @@ class LLMHandler:
 
             logger.info("loading 5Hz LM tokenizer... it may take 80~90s")
             start_time = time.time()
-            # TODO: load tokenizer too slow, not found solution yet
             llm_tokenizer = AutoTokenizer.from_pretrained(full_lm_model_path, use_fast=True)
             logger.info(f"5Hz LM tokenizer loaded successfully in {time.time() - start_time:.2f} seconds")
             self.llm_tokenizer = llm_tokenizer
@@ -769,7 +768,7 @@ class LLMHandler:
         for key in ['bpm', 'caption', 'duration', 'keyscale', 'language', 'timesignature']:
             if key in metadata and metadata[key] is not None:
                 value = metadata[key]
-                if key == "timesignature" and value.endswith("/4"):
+                if key == "timesignature" and isinstance(value, str) and value.endswith("/4"):
                     value = value.split("/")[0]
                 if isinstance(value, str) and value.isdigit():
                     value = int(value)
@@ -900,7 +899,7 @@ class LLMHandler:
                     "user_metadata": user_metadata,
                     "skip_caption": not use_cot_caption,
                     "skip_language": not use_cot_language,
-                    "skip_genres": True,  # Generate genres
+                    "skip_genres": True,  # Skip genres
                     "generation_phase": "cot",
                     # Pass context for building unconditional prompt in CoT phase
                     "caption": caption,
@@ -948,7 +947,7 @@ class LLMHandler:
                     target_duration = cot_duration
                     logger.info(
                         f"Using CoT-generated duration ({cot_duration}s) as "
-                        f"Phase 2 target_duration (original was None/unset)"
+                        f"Phase 2 target_duration"
                     )
             except (ValueError, TypeError):
                 pass
@@ -1907,7 +1906,7 @@ class LLMHandler:
         # Build logits processor for non-CFG operations (repetition penalty, top_k, top_p)
         logits_processor = self._build_logits_processor(repetition_penalty)
 
-        # Per-sequence finished tracking (Fix 4: batch compaction - stop when ALL done)
+        # Track completion of each sequence.
         seq_finished = torch.zeros(batch_size, dtype=torch.bool, device=device)
 
         with torch.inference_mode():
@@ -1922,12 +1921,7 @@ class LLMHandler:
                 cond_logits = next_token_logits[cond_start_idx:cond_start_idx+batch_size]
                 uncond_logits = next_token_logits[uncond_start_idx:uncond_start_idx+batch_size]
 
-                # Fixes 2, 3, 5: When in CODES_GENERATION state, apply the non-audio mask
-                # BEFORE CFG to avoid:
-                #  - wasted compute over the full 217k vocab (only ~64k audio tokens are valid)
-                #  - probability mass leakage from text tokens into the softmax denominator
-                # Extract valid token indices and compute CFG only on those to avoid
-                # NaN from (-inf - -inf) when both cond and uncond are masked.
+                # Compute CFG on valid audio tokens only to avoid invalid logits.
                 if (
                     constrained_processor is not None
                     and constrained_processor.state == FSMState.CODES_GENERATION
@@ -1990,7 +1984,7 @@ class LLMHandler:
                 # Update constrained processor state AFTER sampling
                 self._update_constrained_processor_state(constrained_processor, next_tokens)
 
-                # Per-sequence EOS tracking (Fix 4: stop when ALL sequences are done)
+                # Stop when every sequence reaches EOS.
                 is_eos = next_tokens == eos_token_id
                 if pad_token_id is not None and pad_token_id != eos_token_id:
                     is_eos = is_eos | (next_tokens == pad_token_id)

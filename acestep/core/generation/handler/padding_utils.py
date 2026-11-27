@@ -75,9 +75,7 @@ class PaddingMixin:
                     if audio_duration is not None and float(audio_duration) > 0:
                         batch_target_wavs = self.create_target_wavs(float(audio_duration))
                     else:
-                        # Fall back to a sensible default instead of a random duration.
-                        # Random durations caused garbage output when duration=-1 was
-                        # passed without LM auto-detection (see issue #929).
+                        # Use a 120-second default when duration is unspecified.
                         fallback_duration = 120.0
                         logger.warning(
                             "[padding] No valid audio_duration provided (got {}); "

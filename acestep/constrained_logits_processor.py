@@ -54,23 +54,18 @@ class FSMState(Enum):
     NEWLINE_AFTER_THINK = auto() # Generating "\n" after <think>
     BPM_NAME = auto()            # Generating "bpm: "
     BPM_VALUE = auto()           # Generating numeric value 30-300
-    NEWLINE_AFTER_BPM = auto()   # Generating "\n" after bpm value
     CAPTION_NAME = auto()        # Generating "caption: "
     CAPTION_VALUE = auto()       # Generating caption text (no code blocks/newlines)
     DURATION_NAME = auto()       # Generating "duration: "
     DURATION_VALUE = auto()      # Generating numeric value 10-600
-    NEWLINE_AFTER_DURATION = auto()
     GENRES_NAME = auto()         # Generating "genres: "
     GENRES_VALUE = auto()        # Generating any non-empty string
-    NEWLINE_AFTER_GENRES = auto()
     KEYSCALE_NAME = auto()       # Generating "keyscale: "
     KEYSCALE_VALUE = auto()      # Generating keyscale pattern
-    NEWLINE_AFTER_KEYSCALE = auto()
     LANGUAGE_NAME = auto()       # Generating "language: "
     LANGUAGE_VALUE = auto()      # Generating language code (en, zh, ja, etc.)
     TIMESIG_NAME = auto()        # Generating "timesignature: "
     TIMESIG_VALUE = auto()       # Generating 2, 3, 4, or 6
-    NEWLINE_AFTER_TIMESIG = auto()
     THINK_END_TAG = auto()       # Generating "</think>"
     CODES_GENERATION = auto()    # Generating audio codes (no constraints)
     COMPLETED = auto()           # Generation completed
@@ -128,7 +123,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         self.max_duration = max_duration if max_duration is not None else DURATION_MAX
         self.skip_caption = False  # Set to True to skip caption field generation
         self.skip_language = False  # Set to True to skip language field generation
-        self.caption: Optional[str] = None  # Set via update_caption() before each generation
         
         # User-provided metadata fields (optional)
         # If provided, these fields will be used directly instead of generating
@@ -165,7 +159,7 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         # Current state
         self.state = FSMState.THINK_TAG
         self.position_in_state = 0  # Position within current state's fixed string
-        self.accumulated_value = ""  # For numeric/text value accumulation (legacy, for compatibility)
+        self.accumulated_value = ""
         self.accumulated_token_ids: List[int] = []  # Token ID sequence for keyscale (and other fields)
         
         # Caption generation state tracking
@@ -188,8 +182,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         self.genres_vocab: List[str] = []  # Full vocab
         self.genres_vocab_mtime: float = 0.0
         self.genres_trie: Dict = {}  # Trie for full vocab (fallback)
-        self.caption_genres_trie: Dict = {}  # Trie for caption-matched genres (priority)
-        self.caption_matched_genres: List[str] = []  # Genres matched from caption
         
         self._char_to_tokens: Dict[str, set] = {}  # Precomputed char -> token IDs mapping
         
@@ -240,7 +232,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         # Fixed strings for each state
         # IMPORTANT: Do NOT include trailing space after colon - tokenizer will handle spacing
         # All matching should be done at token level, not string level
-        # NOTE: NEWLINE_AFTER_* states are removed - field values generate newline directly and transition to next field
         self.fixed_strings = {
             FSMState.THINK_TAG: "<think>",
             FSMState.NEWLINE_AFTER_THINK: "\n",
@@ -936,25 +927,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         if self.debug:
             logger.debug(f"Built genres trie with {len(self.genres_vocab)} entries")
     
-    def _collect_complete_genres(self, node: Dict, prefix: str, result: set, max_depth: int = 50):
-        """
-        Recursively collect all complete genres under a trie node.
-        Limited depth to avoid too many matches.
-        """
-        if max_depth <= 0:
-            return
-        
-        if node.get('_end', False):
-            result.add(prefix)
-        
-        # Limit total collected genres to avoid slowdown
-        if len(result) >= 100:
-            return
-        
-        for char, child_node in node.items():
-            if char not in ('_end', '_tokens'):
-                self._collect_complete_genres(child_node, prefix + char, result, max_depth - 1)
-    
     def _precompute_char_token_mapping(self):
         """
         Precompute mapping from characters to token IDs and token decoded texts.
@@ -1031,15 +1003,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
             node = node[char]
         return node
     
-    def _get_trie_node_from_trie(self, trie: Dict, prefix: str) -> Optional[Dict]:
-        """Get a trie node from a specific trie (helper for caption vs full trie)."""
-        node = trie
-        for char in prefix.lower():
-            if char not in node:
-                return None
-            node = node[char]
-        return node
-
     def _get_allowed_genres_tokens(self) -> List[int]:
         """
         Get allowed tokens for genres field based on trie matching.
@@ -1048,11 +1011,7 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         For example, if vocab contains "pop, rock, jazz", the generated string must exactly
         match that entry - we don't treat commas as separators for individual genres.
         
-        Strategy:
-        1. If caption-matched genres exist, use that smaller trie first (faster + more relevant)
-        2. If no caption matches or prefix not in caption trie, fallback to full vocab trie
-        3. Get valid next characters from current trie node
-        4. For each candidate token, verify the full decoded text forms a valid trie prefix
+        Match each candidate token against the vocabulary trie.
         """
         if not self.genres_vocab:
             # No vocab loaded, allow all except newline if empty
@@ -1062,27 +1021,8 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         accumulated = self.accumulated_value.lower()
         current_genre_prefix = accumulated.strip()
         
-        # Determine which trie to use: caption-matched (priority) or full vocab (fallback)
-        use_caption_trie = False
-        current_node = None
-        
-        # Try caption-matched trie first if available
-        if self.caption_genres_trie:
-            if current_genre_prefix == "":
-                current_node = self.caption_genres_trie
-                use_caption_trie = True
-            else:
-                current_node = self._get_trie_node_from_trie(self.caption_genres_trie, current_genre_prefix)
-                if current_node is not None:
-                    use_caption_trie = True
-        
-        # Fallback to full vocab trie
-        if current_node is None:
-            if current_genre_prefix == "":
-                current_node = self.genres_trie
-            else:
-                current_node = self._get_genres_trie_node(current_genre_prefix)
-        
+        current_node = self._get_genres_trie_node(current_genre_prefix)
+
         if current_node is None:
             # Invalid prefix, force newline to end
             if self.newline_token:
@@ -1108,9 +1048,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
             if char in self._char_to_tokens:
                 candidate_tokens.update(self._char_to_tokens[char])
         
-        # Select the appropriate trie for validation
-        active_trie = self.caption_genres_trie if use_caption_trie else self.genres_trie
-        
         # Validate each candidate token: check if prefix + decoded_token is a valid trie prefix
         allowed = set()
         for token_id in candidate_tokens:
@@ -1123,16 +1060,7 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
                     allowed.add(token_id)
                 continue
             
-            # Build new prefix by appending decoded token
-            # Handle space-prefixed tokens (e.g., " rock" from "pop rock")
-            if decoded_normalized.startswith(' ') or decoded_normalized.startswith(','):
-                # Token has leading space/comma - append directly
-                new_prefix = current_genre_prefix + decoded_normalized
-            else:
-                new_prefix = current_genre_prefix + decoded_normalized
-            
-            # Check if new_prefix is a valid prefix in the active trie
-            new_node = self._get_trie_node_from_trie(active_trie, new_prefix)
+            new_node = self._get_genres_trie_node(current_genre_prefix + decoded_normalized)
             if new_node is not None:
                 allowed.add(token_id)
         
@@ -1146,7 +1074,7 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         """Reset the processor state for a new generation."""
         self.state = FSMState.THINK_TAG
         self.position_in_state = 0
-        self.accumulated_value = ""  # Legacy, kept for compatibility
+        self.accumulated_value = ""
         self.accumulated_token_ids = []  # Reset token ID sequence
         self.codes_count = 0  # Reset codes counter
         self.user_field_token_queue = []  # Reset user field token queue
@@ -1845,7 +1773,7 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
             
             self.state = next_state
             self.position_in_state = 0
-            self.accumulated_value = ""  # Legacy, kept for compatibility
+            self.accumulated_value = ""
             self.accumulated_token_ids = []  # Reset token ID sequence for new field
             self.caption_after_newline = False  # Reset caption newline tracking
             self.caption_token_count = 0  # Reset caption token count
@@ -1949,7 +1877,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
             else:
                 # Add token ID to sequence (for prefix tree lookup)
                 self.accumulated_token_ids.append(generated_token_id)
-                # Also update legacy accumulated_value for compatibility
                 if token_str.strip().isdigit():
                     self.accumulated_value += token_str.strip()
 
@@ -2040,7 +1967,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
             else:
                 # Add token ID to sequence (for prefix tree lookup)
                 self.accumulated_token_ids.append(generated_token_id)
-                # Also update legacy accumulated_value for compatibility
                 self.accumulated_value += token_str
         
         elif self.state == FSMState.LANGUAGE_VALUE:
@@ -2052,6 +1978,5 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
             else:
                 # Add token ID to sequence (for prefix tree lookup)
                 self.accumulated_token_ids.append(generated_token_id)
-                # Also update legacy accumulated_value for compatibility
                 self.accumulated_value += token_str
 

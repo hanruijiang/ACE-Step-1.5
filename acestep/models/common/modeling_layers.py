@@ -1025,6 +1025,11 @@ class AceStepTimbreEncoder(AceStepPreTrainedModel):
         # Prepend special token for timbre aggregation (CLS-like token)
         if self.prepend_special_token:
             inputs_embeds = torch.cat([self.special_token.expand(inputs_embeds.shape[0], 1, -1), inputs_embeds], dim=1)
+            if attention_mask is not None:
+                attention_mask = torch.cat([
+                    torch.ones(attention_mask.shape[0], 1, device=attention_mask.device, dtype=attention_mask.dtype),
+                    attention_mask,
+                ], dim=1)
         # Cache position: only used for mask construction (not for actual caching)
         cache_position = torch.arange(0, inputs_embeds.shape[1], device=inputs_embeds.device)
         # Positional IDs
