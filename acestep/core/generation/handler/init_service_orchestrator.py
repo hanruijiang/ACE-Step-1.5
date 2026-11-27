@@ -58,6 +58,7 @@ class InitServiceOrchestratorMixin:
         prefer_source: Optional[str] = None,
         use_mlx_dit: bool = True,
         vae_checkpoint: Optional[str] = None,
+        checkpoint_dir: Optional[str] = None,
     ) -> Tuple[str, bool]:
         """Initialize model artifacts and runtime backends for generation.
 
@@ -119,13 +120,8 @@ class InitServiceOrchestratorMixin:
                 DEFAULT_VAE_VARIANT,
                 get_checkpoints_dir,
             )
-            env_ckpt = os.environ.get("ACESTEP_CHECKPOINTS_DIR")
-            if env_ckpt:
-                checkpoint_dir = str(get_checkpoints_dir())
-            elif project_root:
-                checkpoint_dir = os.path.join(project_root, "checkpoints")
-            else:
-                checkpoint_dir = str(get_checkpoints_dir())
+            checkpoint_dir = str(get_checkpoints_dir(checkpoint_dir, project_root=project_root))
+            self.checkpoint_dir = checkpoint_dir
             checkpoint_path = Path(checkpoint_dir)
 
             # Resolve VAE selection: explicit param > env var > default.

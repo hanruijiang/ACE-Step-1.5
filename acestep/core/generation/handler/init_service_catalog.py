@@ -18,6 +18,8 @@ class InitServiceCatalogMixin:
 
     def _resolve_checkpoint_dir(self) -> str:
         """Return the checkpoints directory, respecting ACESTEP_CHECKPOINTS_DIR."""
+        if getattr(self, "checkpoint_dir", None):
+            return str(self.checkpoint_dir)
         env_dir = os.environ.get("ACESTEP_CHECKPOINTS_DIR")
         if env_dir:
             from acestep.model_downloader import get_checkpoints_dir

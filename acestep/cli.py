@@ -88,8 +88,8 @@ TRACK_CHOICES = [
 
 
 def _get_project_root() -> str:
-    root = Path(__file__).resolve().parent.parent
-    return str(root if (root / 'pyproject.toml').is_file() else Path.cwd())
+    from acestep.model_downloader import get_project_root
+    return str(get_project_root())
 
 
 def _get_default_checkpoint_dir() -> str:
@@ -696,6 +696,7 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
 
         # Model selection (DiT)
         dit_handler = AceStepHandler()
+        dit_handler.checkpoint_dir = args.checkpoint_dir
         available_dit_models = dit_handler.get_available_acestep_v15_models()
         base_only = args.task_type in {"lego", "extract", "complete"}
         if base_only and available_dit_models:
@@ -728,6 +729,7 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
 
         # Model selection (LM)
         llm_handler = LLMHandler()
+        llm_handler.checkpoint_dir = args.checkpoint_dir
         available_lm_models = llm_handler.get_available_5hz_lm_models()
         if available_lm_models:
             selected_lm = _prompt_choice_from_list(
@@ -990,7 +992,8 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
             print(f"Configuration saved to {config_filename}")
             print(f"You can reuse it next time with: python cli.py -c {config_filename}")
         except Exception as e:
-            print(f"Error saving configuration: {e}. Please try again.")
+            print(f"Error saving configuration: {e}", file=sys.stderr)
+            sys.exit(1)
 
     except (KeyboardInterrupt, EOFError):
         print("\nWizard cancelled. Exiting.")
@@ -1059,23 +1062,12 @@ def main():
 
     default_batch_size = 1 if not cli_args.config else config_defaults.batch_size
 
-    # Auto-detect MLX on Apple Silicon, fall back to vllm
-    if mps_available:
-        try:
-            import mlx.core  # noqa: F401
-            default_backend = "mlx"
-            print("Apple Silicon detected with MLX available. Using MLX backend.")
-        except ImportError:
-            default_backend = "vllm"
-    else:
-        default_backend = "vllm"
-
     defaults = {
         "project_root": _get_project_root(),
         "config_path": None,
-        "checkpoint_dir": str(_get_default_checkpoint_dir()),
+        "checkpoint_dir": None,
         "lm_model_path": None,
-        "backend": default_backend,
+        "backend": None,
         "device": "auto",
         "use_flash_attention": None,
         "offload_to_cpu": auto_offload,
@@ -1139,6 +1131,34 @@ def main():
         "cfg_interval_start": params_defaults.cfg_interval_start,
         "cfg_interval_end": params_defaults.cfg_interval_end,
         "lm_negative_prompt": params_defaults.lm_negative_prompt,
+        "repaint_mode": params_defaults.repaint_mode,
+        "repaint_strength": params_defaults.repaint_strength,
+        "repaint_latent_crossfade_frames": params_defaults.repaint_latent_crossfade_frames,
+        "repaint_wav_crossfade_sec": params_defaults.repaint_wav_crossfade_sec,
+        "chunk_mask_mode": params_defaults.chunk_mask_mode,
+        "retake_seed": params_defaults.retake_seed,
+        "retake_variance": params_defaults.retake_variance,
+        "flow_edit_morph": params_defaults.flow_edit_morph,
+        "flow_edit_source_caption": params_defaults.flow_edit_source_caption,
+        "flow_edit_source_lyrics": params_defaults.flow_edit_source_lyrics,
+        "flow_edit_n_min": params_defaults.flow_edit_n_min,
+        "flow_edit_n_max": params_defaults.flow_edit_n_max,
+        "flow_edit_n_avg": params_defaults.flow_edit_n_avg,
+        "cover_noise_strength": params_defaults.cover_noise_strength,
+        "global_caption": params_defaults.global_caption,
+        "sampler_mode": params_defaults.sampler_mode,
+        "velocity_norm_threshold": params_defaults.velocity_norm_threshold,
+        "velocity_ema_factor": params_defaults.velocity_ema_factor,
+        "enable_normalization": params_defaults.enable_normalization,
+        "normalization_db": params_defaults.normalization_db,
+        "fade_in_duration": params_defaults.fade_in_duration,
+        "fade_out_duration": params_defaults.fade_out_duration,
+        "latent_shift": params_defaults.latent_shift,
+        "latent_rescale": params_defaults.latent_rescale,
+        "quantization": None,
+        "vae_checkpoint": None,
+        "mp3_bitrate": config_defaults.mp3_bitrate,
+        "mp3_sample_rate": config_defaults.mp3_sample_rate,
         "log_level": cli_args.log_level,
     }
 
@@ -1154,6 +1174,8 @@ def main():
         except Exception as e:
             parser.error(f"Error loading TOML config file {cli_args.config}: {e}")
         for key, value in config_from_file.items():
+            if key not in defaults:
+                parser.error(f"Unknown configuration parameter: {key}")
             setattr(args, key, value)
         args.config = cli_args.config
         # Track whether the config file itself set use_random_seed, so an
@@ -1166,6 +1188,13 @@ def main():
     # CLI --backend overrides config file and auto-detection
     if cli_args.backend is not None:
         args.backend = cli_args.backend
+
+    args.project_root = os.path.abspath(os.path.expanduser(str(args.project_root or _get_project_root())))
+    from acestep.model_downloader import get_checkpoints_dir
+    custom_dir = args.checkpoint_dir
+    if custom_dir:
+        custom_dir = os.path.join(args.project_root, os.path.expanduser(str(custom_dir)))
+    args.checkpoint_dir = str(get_checkpoints_dir(custom_dir, project_root=args.project_root))
 
     if cli_args.configure:
         args, _ = run_wizard(
@@ -1343,12 +1372,24 @@ def main():
     # --- Handler Initialization ---
     if args.backend == "pyTorch":
         args.backend = "pt"
+    if args.backend is None:
+        import importlib.util
+        if device == "mps":
+            from acestep.models.mlx import mlx_available
+            args.backend = "mlx" if mlx_available() and importlib.util.find_spec("mlx_lm") else "pt"
+        elif device == "cuda" and not getattr(torch.version, "hip", None):
+            from acestep.llm_backend_compat import get_vllm_preflight_warning
+            args.backend = "vllm" if importlib.util.find_spec("nanovllm") and not get_vllm_preflight_warning(device=device) else "pt"
+        else:
+            args.backend = "pt"
     if args.backend not in {"vllm", "pt", "mlx"}:
-        args.backend = "vllm"
+        parser.error(f"Unsupported LM backend: {args.backend}")
 
     print("Initializing ACE-Step handlers...")
     dit_handler = AceStepHandler()
+    dit_handler.checkpoint_dir = args.checkpoint_dir
     llm_handler = LLMHandler()
+    llm_handler.checkpoint_dir = args.checkpoint_dir
 
     base_only_tasks = {"lego", "extract", "complete"}
     skip_lm_tasks = {"cover", "repaint"}
@@ -1372,7 +1413,7 @@ def main():
         if not available_models:
             print("No DiT models found. Downloading main model (acestep-v15-turbo + core components)...")
             from acestep.model_downloader import ensure_main_model, get_checkpoints_dir
-            checkpoints_dir = get_checkpoints_dir()
+            checkpoints_dir = get_checkpoints_dir(args.checkpoint_dir)
             success, msg = ensure_main_model(checkpoints_dir)
             print(msg)
             if not success:
@@ -1383,7 +1424,7 @@ def main():
         if args.task_type in base_only_tasks and not available_models:
             print("Base-only task selected. Downloading base DiT model (acestep-v15-base)...")
             from acestep.model_downloader import ensure_dit_model, get_checkpoints_dir
-            checkpoints_dir = get_checkpoints_dir()
+            checkpoints_dir = get_checkpoints_dir(args.checkpoint_dir)
             success, msg = ensure_dit_model("acestep-v15-base", checkpoints_dir)
             print(msg)
             if not success:
@@ -1412,7 +1453,7 @@ def main():
         check_model_exists,
         SUBMODEL_REGISTRY,
     )
-    checkpoints_dir = get_checkpoints_dir()
+    checkpoints_dir = get_checkpoints_dir(args.checkpoint_dir)
     if not check_main_model_exists(checkpoints_dir):
         print("Main model components not found. Downloading main model...")
         success, msg = ensure_main_model(checkpoints_dir)
@@ -1440,7 +1481,7 @@ def main():
     }
 
     print(f"Initializing DiT handler with model: {args.config_path}")
-    dit_handler.initialize_service(
+    status, success = dit_handler.initialize_service(
         project_root=args.project_root,
         config_path=args.config_path,
         device=device,
@@ -1448,7 +1489,12 @@ def main():
         compile_model=compile_model,
         offload_to_cpu=args.offload_to_cpu,
         offload_dit_to_cpu=args.offload_dit_to_cpu,
+        checkpoint_dir=args.checkpoint_dir,
+        quantization=args.quantization,
+        vae_checkpoint=args.vae_checkpoint,
     )
+    if not success:
+        parser.error(f"DiT initialization failed: {status}")
 
     if requires_lm:
         from acestep.model_downloader import ensure_lm_model
@@ -1482,7 +1528,7 @@ def main():
                 parser.error(f"LM model '{lm_model_path}' not found locally and not in registry. Please provide a valid --lm_model_path.")
 
         print(f"Initializing LM handler with model: {args.lm_model_path}")
-        llm_handler.initialize(
+        status, success = llm_handler.initialize(
             checkpoint_dir=args.checkpoint_dir,
             lm_model_path=args.lm_model_path,
             backend=args.backend,
@@ -1490,6 +1536,9 @@ def main():
             offload_to_cpu=args.offload_to_cpu,
             dtype=None,
         )
+        if not success:
+            parser.error(f"LM initialization failed: {status}")
+        print(f"Actual LM backend: {llm_handler.llm_backend}")
     else:
         if args.task_type in skip_lm_tasks:
             print(f"LM is not required for task_type '{args.task_type}'. Skipping LM handler initialization.")
@@ -1706,7 +1755,31 @@ def main():
         use_cot_caption=args.use_cot_caption,
         use_cot_lyrics=args.use_cot_lyrics,
         use_cot_language=args.use_cot_language,
-        use_constrained_decoding=args.use_constrained_decoding
+        use_constrained_decoding=args.use_constrained_decoding,
+        repaint_mode=args.repaint_mode,
+        repaint_strength=args.repaint_strength,
+        repaint_latent_crossfade_frames=args.repaint_latent_crossfade_frames,
+        repaint_wav_crossfade_sec=args.repaint_wav_crossfade_sec,
+        chunk_mask_mode=args.chunk_mask_mode,
+        retake_seed=args.retake_seed,
+        retake_variance=args.retake_variance,
+        flow_edit_morph=args.flow_edit_morph,
+        flow_edit_source_caption=args.flow_edit_source_caption,
+        flow_edit_source_lyrics=args.flow_edit_source_lyrics,
+        flow_edit_n_min=args.flow_edit_n_min,
+        flow_edit_n_max=args.flow_edit_n_max,
+        flow_edit_n_avg=args.flow_edit_n_avg,
+        cover_noise_strength=args.cover_noise_strength,
+        global_caption=args.global_caption,
+        sampler_mode=args.sampler_mode,
+        velocity_norm_threshold=args.velocity_norm_threshold,
+        velocity_ema_factor=args.velocity_ema_factor,
+        enable_normalization=args.enable_normalization,
+        normalization_db=args.normalization_db,
+        fade_in_duration=args.fade_in_duration,
+        fade_out_duration=args.fade_out_duration,
+        latent_shift=args.latent_shift,
+        latent_rescale=args.latent_rescale,
     )
 
     config = GenerationConfig(
@@ -1716,7 +1789,9 @@ def main():
         seeds=args.seeds,
         lm_batch_chunk_size=args.lm_batch_chunk_size,
         constrained_decoding_debug=args.constrained_decoding_debug,
-        audio_format=args.audio_format
+        audio_format=args.audio_format,
+        mp3_bitrate=args.mp3_bitrate,
+        mp3_sample_rate=args.mp3_sample_rate,
     )
 
     # --- Generate Music ---
@@ -1743,6 +1818,7 @@ def main():
     manual_edit_pipeline = (
         args.thinking
         and args.task_type not in skip_lm_tasks
+        and not params.flow_edit_morph
         and not (params.audio_codes and str(params.audio_codes).strip())
     )
 
@@ -2045,8 +2121,9 @@ def main():
             print("-------------------\n")
 
     else:
-        print(f"\n❌ Generation failed: {result.error}")
-        print(f"   Status: {result.status_message}")
+        print(f"\n❌ Generation failed: {result.error}", file=sys.stderr)
+        print(f"   Status: {result.status_message}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

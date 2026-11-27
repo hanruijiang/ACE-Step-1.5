@@ -166,6 +166,8 @@ class LLMHandler:
 
     def _get_checkpoint_dir(self) -> str:
         """Get checkpoint directory via the shared resolver."""
+        if getattr(self, "checkpoint_dir", None):
+            return str(self.checkpoint_dir)
         if self.persistent_storage_path:
             return os.path.join(self.persistent_storage_path, "checkpoints")
         from acestep.model_downloader import get_checkpoints_dir

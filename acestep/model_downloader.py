@@ -341,7 +341,7 @@ def get_project_root() -> Path:
     return Path(os.getcwd())
 
 
-def get_checkpoints_dir(custom_dir: Optional[str] = None) -> Path:
+def get_checkpoints_dir(custom_dir: Optional[str] = None, project_root: Optional[str] = None) -> Path:
     """Get the checkpoints directory path.
 
     Resolution order:
@@ -352,11 +352,12 @@ def get_checkpoints_dir(custom_dir: Optional[str] = None) -> Path:
     3. ``<project_root>/checkpoints`` (original default)
     """
     if custom_dir:
-        return Path(custom_dir)
+        return Path(custom_dir).expanduser().resolve()
     env_dir = os.environ.get("ACESTEP_CHECKPOINTS_DIR")
     if env_dir:
         return Path(env_dir).expanduser().resolve()
-    return get_project_root() / "checkpoints"
+    root = Path(project_root).expanduser().resolve() if project_root else get_project_root()
+    return root / "checkpoints"
 
 
 def _contains_model_weights(model_path: Path) -> bool:
