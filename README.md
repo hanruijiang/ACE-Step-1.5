@@ -17,7 +17,7 @@ uv sync --extra vllm
 uv run --extra vllm acestep --backend vllm --config config.toml
 ```
 
-Python 3.11 and 3.12 use platform-specific Triton and Flash Attention wheels where available. The pinned Windows Python 3.12 combination currently has no verified Flash Attention wheel; nano-vLLM uses the SDPA/eager fallback if needed. For optional DiT quantization on supported CUDA builds, use `uv sync --extra quantization` (combine extras when needed).
+Python 3.11 and 3.12 use platform-specific Triton and Flash Attention wheels where available. The pinned Windows Python 3.12 combination currently has no verified Flash Attention wheel; nano-vLLM uses the SDPA/eager fallback if needed. For optional DiT quantization on supported CUDA builds, use `uv sync --extra quantization` and `uv run --extra quantization acestep --config config.toml` (combine extras when needed).
 
 For pip installation from the repository:
 

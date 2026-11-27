@@ -18,13 +18,8 @@ class InitServiceCatalogMixin:
 
     def _resolve_checkpoint_dir(self) -> str:
         """Return the checkpoints directory, respecting ACESTEP_CHECKPOINTS_DIR."""
-        if getattr(self, "checkpoint_dir", None):
-            return str(self.checkpoint_dir)
-        env_dir = os.environ.get("ACESTEP_CHECKPOINTS_DIR")
-        if env_dir:
-            from acestep.model_downloader import get_checkpoints_dir
-            return str(get_checkpoints_dir())
-        return os.path.join(self._get_project_root(), "checkpoints")
+        from acestep.model_downloader import get_checkpoints_dir
+        return str(get_checkpoints_dir(getattr(self, "checkpoint_dir", None), project_root=self._get_project_root()))
 
     def get_available_checkpoints(self) -> List[str]:
         """Return available checkpoint directory paths under the project root."""

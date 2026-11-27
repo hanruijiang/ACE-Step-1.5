@@ -188,7 +188,7 @@ class InitServiceMixinTests(unittest.TestCase):
             self.assertEqual(host.get_available_checkpoints(), [])
 
         with patch("os.path.exists", return_value=True):
-            self.assertEqual(host.get_available_checkpoints(), [os.path.join("K:/fake_root", "checkpoints")])
+            self.assertEqual(host.get_available_checkpoints(), [str(Path("K:/fake_root").resolve() / "checkpoints")])
 
     def test_get_available_acestep_v15_models_filters_and_sorts(self):
         """It filters to acestep-v15 directories and returns sorted model names."""
@@ -426,7 +426,7 @@ class InitServiceMixinTests(unittest.TestCase):
                                     device="cpu",
                                 )
         self.assertTrue(ok)
-        expected_model_path = os.path.normpath("K:/custom_root/checkpoints/acestep-v15-turbo")
+        expected_model_path = str(Path("K:/custom_root/checkpoints/acestep-v15-turbo").resolve())
         self.assertEqual(os.path.normpath(host._captured_model_path), expected_model_path)
         self.assertIn(expected_model_path, os.path.normpath(status))
 
@@ -462,6 +462,7 @@ class InitServiceMixinTests(unittest.TestCase):
         self.assertIn("Model initialized successfully on cpu", status)
         expected_keys = {
             "project_root",
+            "checkpoint_dir",
             "config_path",
             "device",
             "use_flash_attention",

@@ -337,7 +337,7 @@ def get_project_root() -> Path:
     """
     env_root = os.environ.get("ACESTEP_PROJECT_ROOT")
     if env_root:
-        return Path(env_root).resolve()
+        return Path(env_root).expanduser().resolve()
     return Path(os.getcwd())
 
 

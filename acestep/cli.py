@@ -685,8 +685,7 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
             print("Note: This task requires a base DiT model (acestep-v15-base). It will be auto-downloaded if missing.")
 
         # Model selection (DiT)
-        dit_handler = AceStepHandler()
-        dit_handler.checkpoint_dir = args.checkpoint_dir
+        dit_handler = AceStepHandler(project_root=args.project_root, checkpoint_dir=args.checkpoint_dir)
         available_dit_models = dit_handler.get_available_acestep_v15_models()
         base_only = args.task_type in {"lego", "extract", "complete"}
         if base_only and available_dit_models:
@@ -965,6 +964,12 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
                 print("Generation cancelled.")
                 sys.exit(0)
 
+        from acestep.audio_utils import SUPPORTED_AUDIO_FORMATS
+        args.audio_format = str(args.audio_format).lower()
+        if args.audio_format not in SUPPORTED_AUDIO_FORMATS:
+            print(f"Unsupported audio format: {args.audio_format}", file=sys.stderr)
+            sys.exit(1)
+
         default_filename = default_config_path or "config.toml"
         config_filename = input(f"\nEnter filename to save configuration [{default_filename}]: ")
         if not config_filename:
@@ -1047,8 +1052,6 @@ def main():
         help="Logging level for internal modules (TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL).",
     )
     cli_args = parser.parse_args()
-
-    _configure_logging(level=cli_args.log_level or "INFO")
 
     default_batch_size = 1 if not cli_args.config else config_defaults.batch_size
 
@@ -1383,6 +1386,8 @@ def main():
                 parser.error(f"Could not read lyrics file {lyrics_arg}. Error: {e}")
         # else: lyrics is a string, use as is.
 
+    if args.flow_edit_morph and args.use_cot_lyrics:
+        parser.error("FlowEdit requires explicit target lyrics; lyrics=generate is not supported.")
     from acestep.audio_utils import SUPPORTED_AUDIO_FORMATS
     args.audio_format = str(args.audio_format).lower()
     if args.audio_format not in SUPPORTED_AUDIO_FORMATS:
@@ -1407,24 +1412,20 @@ def main():
         parser.error(f"Unsupported LM backend: {args.backend}")
 
     print("Initializing ACE-Step handlers...")
-    dit_handler = AceStepHandler()
-    dit_handler.checkpoint_dir = args.checkpoint_dir
+    dit_handler = AceStepHandler(project_root=args.project_root, checkpoint_dir=args.checkpoint_dir)
     llm_handler = LLMHandler()
     llm_handler.checkpoint_dir = args.checkpoint_dir
 
     base_only_tasks = {"lego", "extract", "complete"}
     skip_lm_tasks = DIRECT_CONDITIONING_TASKS
-    requires_lm = (
-        args.task_type not in skip_lm_tasks and not args.flow_edit_morph and (
-            args.thinking
-            or args.sample_mode
-            or bool(args.sample_query and str(args.sample_query).strip())
-            or args.use_format
-            or args.use_cot_metas
-            or args.use_cot_caption
-            or args.use_cot_lyrics
-            or args.use_cot_language
-        )
+    # Direct conditioning tasks do not need LM audio codes, but explicit
+    # sample formatting or lyric generation can still use the LM beforehand.
+    requires_lm = not args.flow_edit_morph and (
+        args.sample_mode or bool(args.sample_query and str(args.sample_query).strip())
+        or args.use_format or args.use_cot_lyrics
+        or (args.task_type not in skip_lm_tasks and (
+            args.thinking or args.use_cot_metas or args.use_cot_caption or args.use_cot_language
+        ))
     )
 
     if args.config_path is None:
@@ -1707,7 +1708,7 @@ def main():
         args.use_cot_metas = False
 
     # --- Prompt Editing Hook for LLM Audio Tokens ---
-    if args.thinking and args.task_type not in skip_lm_tasks:
+    if args.thinking and args.task_type not in skip_lm_tasks and not args.flow_edit_morph:
         instruction_path = os.path.join(
             os.path.abspath(args.project_root) if args.project_root else os.getcwd(),
             "instruction.txt",

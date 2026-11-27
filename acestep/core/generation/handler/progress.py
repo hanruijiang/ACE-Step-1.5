@@ -27,10 +27,11 @@ class ProgressMixin:
         process, regardless of whether the package was installed via
         ``pip install .`` or run from source.
         """
-        env_root = os.environ.get("ACESTEP_PROJECT_ROOT")
-        if env_root:
-            return os.path.abspath(env_root)
-        return os.getcwd()
+        from acestep.model_downloader import get_project_root
+        root = getattr(self, "project_root", None)
+        if root:
+            return os.path.abspath(os.path.expanduser(root))
+        return str(get_project_root())
 
     def _load_progress_estimates(self) -> None:
         """Load persisted diffusion progress estimates if available."""

@@ -584,6 +584,9 @@ class LLMHandler:
                 lm_model_path = "acestep-5Hz-lm-1.7B"
                 logger.info(f"[initialize] lm_model_path is None, using default: {lm_model_path}")
 
+            from acestep.model_downloader import get_checkpoints_dir
+            checkpoint_dir = str(get_checkpoints_dir(checkpoint_dir))
+            self.checkpoint_dir = checkpoint_dir
             full_lm_model_path = os.path.join(checkpoint_dir, lm_model_path)
             if not os.path.exists(full_lm_model_path):
                 return f"❌ 5Hz LM model not found at {full_lm_model_path}", False

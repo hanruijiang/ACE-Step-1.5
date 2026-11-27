@@ -122,6 +122,7 @@ class InitServiceOrchestratorMixin:
             )
             checkpoint_dir = str(get_checkpoints_dir(checkpoint_dir, project_root=project_root))
             self.checkpoint_dir = checkpoint_dir
+            self.project_root = project_root
             checkpoint_path = Path(checkpoint_dir)
 
             # Resolve VAE selection: explicit param > env var > default.
@@ -191,6 +192,7 @@ class InitServiceOrchestratorMixin:
 
             self.last_init_params = {
                 "project_root": project_root,
+                "checkpoint_dir": checkpoint_dir,
                 "config_path": config_path,
                 "device": resolved_device,
                 "use_flash_attention": use_flash_attention,

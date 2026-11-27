@@ -92,8 +92,10 @@ class AceStepHandler(
 ):
     """ACE-Step Business Logic Handler"""
     
-    def __init__(self):
+    def __init__(self, project_root: Optional[str] = None, checkpoint_dir: Optional[str] = None):
         """Initialize runtime model handles, feature flags, and generation state."""
+        self.project_root = project_root
+        self.checkpoint_dir = checkpoint_dir
         self.model = None
         self.config = None
         self.device = "cpu"
