@@ -796,7 +796,7 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         return xt
 
     def flowedit_generate_audio(self, **kwargs):
-        """Flow-edit overlay (#1156) on the CFG-distilled XL-turbo variant.
+        """Flow-edit overlay on the CFG-distilled XL-turbo variant.
 
         Force ``diffusion_guidance_scale=1.0`` because XL-turbo bakes
         CFG into the velocity head — paired-CFG would amplify a delta

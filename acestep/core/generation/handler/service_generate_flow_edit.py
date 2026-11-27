@@ -1,4 +1,4 @@
-"""Flow-edit overlay dispatch on text2music task (issue #1156).
+"""Dispatch FlowEdit generation.
 
 The user's ``caption`` / ``lyrics`` already flowed through the regular
 text2music preprocessing pipeline and ended up in ``payload`` as the

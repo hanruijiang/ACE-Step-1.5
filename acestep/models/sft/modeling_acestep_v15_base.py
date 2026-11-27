@@ -1149,11 +1149,11 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         }
 
     def flowedit_generate_audio(self, **kwargs):
-        """Flow-edit (#1156): morph src toward a target prompt/lyrics.
+        """Flow-edit: morph src toward a target prompt/lyrics.
 
         Thin delegate to ``models.common.flow_edit_pipeline`` so all four
         base variants share the same implementation.  See that module's
-        docstring for the algorithm and v1 sampler-trick exclusions.
+        docstring for the algorithm and supported sampler settings.
         """
         from acestep.models.common.flow_edit_pipeline import (
             flowedit_generate_audio as _flowedit_impl,

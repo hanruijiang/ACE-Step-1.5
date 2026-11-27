@@ -1,8 +1,4 @@
-"""Helper primitives for ``flow_edit.flowedit_sampling_loop`` (#1156).
-
-Split out per the project's 200 LOC module cap.  Each helper is a small,
-side-effect-free function that the main loop composes per step.
-"""
+"""Sampling helpers for FlowEdit."""
 
 from __future__ import annotations
 
