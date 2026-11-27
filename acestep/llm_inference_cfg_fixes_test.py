@@ -79,7 +79,6 @@ class TestCotCfgScaleFixed(unittest.TestCase):
         """generate_from_formatted_prompt called during CoT must receive cfg_scale=1.0."""
         handler = LLMHandler()
         handler.llm_initialized = True
-        handler.llm_backend = "pt"
 
         captured_cfg = {}
 
@@ -124,7 +123,6 @@ class TestCotCfgScaleFixed(unittest.TestCase):
         regardless of the user-supplied cfg_scale value."""
         handler = LLMHandler()
         handler.llm_initialized = True
-        handler.llm_backend = "pt"
 
         # Capture cfg passed to generate_from_formatted_prompt
         captured_cfgs = []

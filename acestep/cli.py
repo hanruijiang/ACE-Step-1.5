@@ -600,7 +600,6 @@ def _print_final_parameters(
     print(f"thinking: {params.thinking}")
     print(f"lm_model: {args.lm_model_path or 'auto'}")
     print(f"dit_model: {args.config_path or 'auto'}")
-    print(f"backend: {args.backend}")
     print(f"device: {device_display}")
     print(f"audio_format: {config.audio_format}")
     print(f"save_dir: {args.save_dir}")
@@ -974,7 +973,7 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
         try:
             config_to_save = {
                 k: v for k, v in vars(args).items()
-                if k not in {'config', 'backend'} and not k.startswith('_')
+                if k not in {'config'} and not k.startswith('_')
             }
             with open(config_filename, 'w') as f:
                 toml.dump(config_to_save, f)
@@ -1050,13 +1049,6 @@ def main():
     parser.add_argument("-c", "--config", type=str, help="Path to a TOML configuration file to load.")
     parser.add_argument("--configure", action="store_true", help="Run wizard to save configuration without generating.")
     parser.add_argument(
-        "--backend",
-        type=str,
-        default=None,
-        choices=["pt", "pyTorch"],
-        help="PyTorch inference backend."
-    )
-    parser.add_argument(
         "--log-level",
         type=str,
         default=None,
@@ -1071,7 +1063,6 @@ def main():
         "config_path": None,
         "checkpoint_dir": None,
         "lm_model_path": None,
-        "backend": None,
         "device": "auto",
         "offload_to_cpu": auto_offload,
         "offload_dit_to_cpu": False,
@@ -1182,11 +1173,6 @@ def main():
         args._use_random_seed_explicit = "use_random_seed" in config_from_file
 
     # Validate runtime settings.
-    if cli_args.backend is not None:
-        args.backend = cli_args.backend
-    if args.backend not in (None, "pt", "pyTorch"):
-        parser.error(f"Unsupported LM backend: {args.backend}. Only PyTorch is supported.")
-    args.backend = "pt"
     if cli_args.log_level is not None:
         args.log_level = cli_args.log_level
     try:
@@ -1502,14 +1488,12 @@ def main():
         status, success = llm_handler.initialize(
             checkpoint_dir=args.checkpoint_dir,
             lm_model_path=args.lm_model_path,
-            backend=args.backend,
             device=device,
             offload_to_cpu=args.offload_to_cpu,
             dtype=None,
         )
         if not success:
             parser.error(f"LM initialization failed: {status}")
-        print(f"Actual LM backend: {llm_handler.llm_backend}")
     else:
         if args.task_type in skip_lm_tasks:
             print(f"LM is not required for task_type '{args.task_type}'. Skipping LM handler initialization.")
@@ -1797,7 +1781,11 @@ def main():
                 seed_for_generation = ",".join(str(s) for s in config.seeds)
             elif isinstance(config.seeds, int):
                 seed_for_generation = str(config.seeds)
+        elif params.seed is not None and params.seed != -1:
+            seed_for_generation = str(params.seed)
         actual_seed_list, _ = dit_handler.prepare_seeds(actual_batch_size, seed_for_generation, config.use_random_seed)
+        config.seeds = actual_seed_list
+        config.use_random_seed = False
 
         original_target_duration = params.duration
         original_bpm = params.bpm

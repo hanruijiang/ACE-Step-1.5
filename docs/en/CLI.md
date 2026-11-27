@@ -33,7 +33,6 @@ python cli.py --configure --config config.toml
 
 - `-c` / `--config` — Path to a `.toml` configuration file to load.
 - `--configure` — Run wizard to save configuration without generating.
-- `--backend pt` — Select the PyTorch inference backend.
 - `--log-level` — Logging level for internal modules. One of `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. Default: `INFO`.
 
 ---

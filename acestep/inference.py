@@ -450,15 +450,7 @@ def generate_music(
     """
     try:
         # Phase 1: LM-based metadata and code generation (if enabled)
-        # Flow-edit overlay on text2music must use the *VAE encoding* of
-        # ``src_audio`` as the V_delta integration's starting latent, not
-        # codes-decoded latents.  ``conditioning_target._prepare_target_latents_and_wavs``
-        # otherwise replaces target_wavs with zeros and drops in
-        # ``_decode_audio_codes_to_latents(codes)`` whose output sits at a
-        # different distribution than the VAE encoder produces — zt_edit
-        # starts OOD and the integration collapses to a near-silent latent
-        # (peak ~0.007 in the user's repro).  Drop the codes here so the
-        # downstream pipeline VAE-encodes the user's mp3 cleanly.
+        # FlowEdit uses VAE-encoded source audio rather than LM audio codes.
         if params.task_type == "text2music" and params.flow_edit_morph:
             audio_code_string_to_use = ""
         else:
@@ -502,62 +494,26 @@ def generate_music(
         # Determine actual batch size for chunk processing
         actual_batch_size = config.batch_size if config.batch_size is not None else 1
 
-        # Prepare seeds for batch generation
-        # Use config.seed if provided, otherwise fallback to params.seed
-        # Convert config.seed (None, int, or List[int]) to format that prepare_seeds accepts
-        seed_for_generation = ""
-        # Original code (commented out because it crashes on int seeds):
-        # if config.seeds is not None and len(config.seeds) > 0:
-        #     if isinstance(config.seeds, list):
-        #         # Convert List[int] to comma-separated string
-        #         seed_for_generation = ",".join(str(s) for s in config.seeds)
-
-        if config.seeds is not None:
-            if isinstance(config.seeds, list) and len(config.seeds) > 0:
-                # Convert List[int] to comma-separated string
-                seed_for_generation = ",".join(str(s) for s in config.seeds)
-            elif isinstance(config.seeds, int):
-                # Fix: Explicitly handle single integer seeds by converting to string.
-                # Previously, this would crash because 'len()' was called on an int.
-                seed_for_generation = str(config.seeds)
-        elif params.seed is not None and params.seed != -1:
-            # config.seeds (plural) is unset - fall back to params.seed (singular),
-            # matching the comment above. Without this, a bare `seed = 42` in a TOML
-            # config was silently dropped: only `seeds = [42]` had any effect.
-            seed_for_generation = str(params.seed)
-
-        # Use dit_handler.prepare_seeds to handle seed list generation and padding
-        # This will handle all the logic: padding with random seeds if needed, etc.
-        actual_seed_list, _ = dit_handler.prepare_seeds(actual_batch_size, seed_for_generation, config.use_random_seed)
-        use_random_seed_for_dit = config.use_random_seed
+        # Resolve seeds once for the LM, DiT and output metadata.
+        if isinstance(config.seeds, list):
+            seed_input = ",".join(str(seed) for seed in config.seeds)
+        elif config.seeds is not None:
+            seed_input = str(config.seeds)
+        else:
+            seed_input = str(params.seed) if params.seed is not None else ""
+        actual_seed_list, _ = dit_handler.prepare_seeds(
+            actual_batch_size, seed_input, config.use_random_seed
+        )
         if cached_repaint_source is not None:
             actual_seed_list = _resample_matching_source_seeds(
-                actual_seed_list,
-                cached_repaint_source.source_seed,
+                actual_seed_list, cached_repaint_source.source_seed
             )
-            seed_for_generation = ",".join(str(seed) for seed in actual_seed_list)
-            use_random_seed_for_dit = False
+        seed_for_generation = ",".join(str(seed) for seed in actual_seed_list)
 
         # LM-based Chain-of-Thought reasoning
-        # Skip LM for the direct-conditioning tasks - these use reference/src audio
-        # directly and don't need LM to generate audio codes or metadata.
-        # For extract tasks, LLM-generated captions can conflict with the extract instruction
-        # and cause the DiT model to reconstruct input audio instead of extracting stems.
-        # complete/lego were previously NOT skipped, so with thinking=True the LM
-        # generated audio codes from text alone (no src_audio conditioning at the LM
-        # stage). Those codes then pre-empted real src_audio processing downstream in
-        # ``_prepare_reference_and_source_audio`` (the "Audio codes provided, ignoring
-        # src_audio" branch), so the DiT never saw the source audio.
+        # Direct-conditioning tasks use source audio without LM-generated codes.
         skip_lm_tasks = DIRECT_CONDITIONING_TASKS
-        # Flow-edit overlay on text2music must NOT trigger LM Phase 1.
-        # Even if Think is on, the LM-generated codes would be routed
-        # into ``conditioning_target`` which replaces target_wavs with
-        # zeros and uses ``_decode_audio_codes_to_latents(codes)`` for
-        # target_latents — flow-edit's ``zt_edit = src_latents.clone()``
-        # then starts at a codes-decoded latent (different distribution
-        # than VAE encode) and the V_delta integration collapses to a
-        # near-silent latent.  Treat morph-on-text2music like a skip
-        # task so Think / CoT both no-op.
+        # FlowEdit uses source audio conditioning.
         morph_on_text2music = (
             params.task_type == "text2music" and params.flow_edit_morph
         )
@@ -759,7 +715,6 @@ def generate_music(
             audio_duration = None
 
         # Phase 2: DiT music generation
-        # Use seed_for_generation (from config.seed or params.seed) instead of params.seed for actual generation
         dit_generate_kwargs = {
             "captions": dit_input_caption,
             "global_caption": params.global_caption,
@@ -770,8 +725,8 @@ def generate_music(
             "vocal_language": dit_input_vocal_language,
             "inference_steps": params.inference_steps,
             "guidance_scale": params.guidance_scale,
-            "use_random_seed": use_random_seed_for_dit,
-            "seed": seed_for_generation,  # Use config.seed (or params.seed fallback) instead of params.seed directly
+            "use_random_seed": False,
+            "seed": seed_for_generation,
             "reference_audio": params.reference_audio,
             "audio_duration": audio_duration,
             "batch_size": config.batch_size if config.batch_size is not None else 1,
@@ -848,9 +803,8 @@ def generate_music(
         status_message = result.get("status_message", "")
         dit_extra_outputs = result.get("extra_outputs", {})
 
-        # Use the seed list already prepared above (from config.seed or params.seed fallback)
-        # actual_seed_list was computed earlier using dit_handler.prepare_seeds
-        seed_list = actual_seed_list
+        # The handler may reduce the batch size for available memory.
+        seed_list = actual_seed_list[:len(dit_audios)]
 
         # Get base params dictionary
         base_params_dict = params.to_dict()
@@ -919,8 +873,6 @@ def generate_music(
                      peak_after = torch.max(torch.abs(audio_tensor)).item()
                      logger.info(f"[Normalization] Audio {idx} AFTER: Peak={peak_after:.4f}")
                      
-                     # Update the tensor in the dict so downstream uses the normalized version ??
-                     # Actually we use audio_tensor variable below, so it's fine.
                  except Exception as e:
                      logger.error(f"Normalization failed: {e}")
             # -------------------------------
@@ -941,12 +893,6 @@ def generate_music(
             # --------------------------
 
             # Generate UUID for this audio (moved from handler)
-            batch_seed = seed_list[idx] if idx < len(seed_list) else seed_list[0] if seed_list else -1
-
-            audio_code_str = lm_generated_audio_codes_list[idx] if (
-                lm_generated_audio_codes_list and idx < len(lm_generated_audio_codes_list)) else audio_code_string_to_use
-            if isinstance(audio_code_str, list):
-                audio_code_str = audio_code_str[idx] if idx < len(audio_code_str) else ""
 
             audio_key = generate_uuid_from_params(audio_params)
 

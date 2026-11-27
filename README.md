@@ -19,7 +19,7 @@ pip install -r requirements.txt
 python cli.py
 ```
 
-For AMD ROCm or Intel XPU, create a separate virtual environment, install the appropriate matching `torch` and `torchaudio` builds first, and then install the corresponding `requirements-rocm-linux.txt`, `requirements-rocm.txt`, or `requirements-xpu.txt`. Run `python cli.py --backend pt` from that environment, not the default CUDA-targeted `uv run`. The Windows ROCm file contains SDK and wheel installation instructions.
+For AMD ROCm or Intel XPU, create a separate virtual environment, install the appropriate matching `torch` and `torchaudio` builds first, and then install the corresponding `requirements-rocm-linux.txt`, `requirements-rocm.txt`, or `requirements-xpu.txt`. Run `python cli.py` from that environment, not the default CUDA-targeted `uv run`. The Windows ROCm file contains SDK and wheel installation instructions.
 
 ## Inference
 
@@ -36,7 +36,7 @@ uv run acestep --config config.toml
 uv run acestep-download --help
 ```
 
-The wizard supports text2music, cover, repaint, lego, extract and complete. TOML configurations also support cover-nofsq. It preserves local model selection, 5Hz LM thinking and sample formatting, metadata, batch generation, and audio output options. Lego, extract and complete require a compatible base model. PyTorch is the sole inference backend. Supported output formats: WAV, WAV32, FLAC, MP3, Opus and AAC.
+The wizard supports text2music, cover, repaint, lego, extract and complete. TOML configurations also support cover-nofsq. It supports local model selection, 5Hz LM thinking and sample formatting, metadata, batch generation, and audio output options. Lego, extract and complete require a compatible base model. PyTorch is the sole inference backend. Supported output formats: WAV, WAV32, FLAC, MP3, Opus and AAC.
 
 Set `checkpoint_dir` in TOML or `ACESTEP_CHECKPOINTS_DIR` to store checkpoints outside the checkout; otherwise use `project_root/checkpoints` (project root defaults to `ACESTEP_PROJECT_ROOT` or the working directory). See [CLI guide](docs/en/CLI.md) for the TOML workflow and prompt editing.
 

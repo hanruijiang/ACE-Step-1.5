@@ -1,10 +1,4 @@
-"""Regression test for the singular ``params.seed`` fallback in ``generate_music``.
-
-A bare ``seed = 42`` (singular) in a TOML config used to be silently ignored:
-``seed_for_generation`` only ever consulted ``config.seeds`` (plural), never
-``params.seed``, despite a comment claiming the fallback existed. See issue
-#1259 / PR #1282.
-"""
+"""Verify that singular and random seeds reach DiT after resolution."""
 
 from __future__ import annotations
 
@@ -27,13 +21,13 @@ class RecordingDitHandler:
         self.generate_kwargs: Optional[dict[str, Any]] = None
 
     def prepare_seeds(self, batch_size: int, seed: str, use_random_seed: bool) -> tuple[list[int], None]:
-        """Return a fixed seed list, ignoring inputs; the real handler parses ``seed``.
+        """Resolve an explicit seed or a fixed stand-in for a random seed.
 
         Returns:
             ``(seeds, None)`` — a list of ``batch_size`` identical seeds, and the
             padding info the real handler returns and ``generate_music`` discards.
         """
-        return [1234] * batch_size, None
+        return [int(seed) if not use_random_seed and seed not in ("", "-1") else 1234] * batch_size, None
 
     def generate_music(
         self,
@@ -96,7 +90,7 @@ class SingularSeedFallbackTests(unittest.TestCase):
         self.assertFalse(dit_handler.generate_kwargs["use_random_seed"])
 
     def test_missing_seed_still_uses_random_seed(self) -> None:
-        """Control: without an explicit params.seed, the random-seed path is unaffected."""
+        """A random seed is resolved before DiT and forwarded explicitly."""
         dit_handler = RecordingDitHandler()
         llm_handler = _make_llm_handler()
         params = GenerationParams(
@@ -110,8 +104,8 @@ class SingularSeedFallbackTests(unittest.TestCase):
         generate_music(dit_handler, llm_handler, params, config)
 
         self.assertIsNotNone(dit_handler.generate_kwargs, "DiT handler was never called")
-        self.assertEqual("", dit_handler.generate_kwargs["seed"])
-        self.assertTrue(dit_handler.generate_kwargs["use_random_seed"])
+        self.assertEqual("1234", dit_handler.generate_kwargs["seed"])
+        self.assertFalse(dit_handler.generate_kwargs["use_random_seed"])
 
 
 if __name__ == "__main__":

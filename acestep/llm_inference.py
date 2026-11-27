@@ -35,7 +35,6 @@ class LLMHandler:
         self.llm = None
         self.llm_tokenizer = None
         self.llm_initialized = False
-        self.llm_backend = None
         self.max_model_len = 4096
         self.device = "cpu"
         self.dtype = torch.float32
@@ -273,7 +272,6 @@ class LLMHandler:
             else:
                 self.llm = self.llm.to("cpu").to(self.dtype)
             self.llm.eval()
-            self.llm_backend = "pt"
             self.llm_initialized = True
             logger.info(f"5Hz LM initialized successfully using PyTorch backend on {device}")
             status_msg = f"✅ 5Hz LM initialized successfully\nModel: {model_path}\nBackend: PyTorch\nDevice: {device}"
@@ -366,7 +364,6 @@ class LLMHandler:
         self,
         checkpoint_dir: str,
         lm_model_path: str,
-        backend: str = "pt",
         device: str = "auto",
         offload_to_cpu: bool = False,
         dtype: Optional[torch.dtype] = None,
@@ -377,7 +374,6 @@ class LLMHandler:
         Args:
             checkpoint_dir: Checkpoint directory path
             lm_model_path: LM model path (relative to checkpoint_dir)
-            backend: PyTorch ("pt").
             device: Device type ("auto", "cuda", "mps", "xpu", or "cpu")
             offload_to_cpu: Whether to offload to CPU
             dtype: Data type (if None, auto-detect based on device)
@@ -386,8 +382,6 @@ class LLMHandler:
             (status_message, success)
         """
         try:
-            if backend not in ("pt", "pyTorch"):
-                return f"Unsupported LM backend: {backend}. Only PyTorch is supported.", False
             if device == "auto":
                 if torch.cuda.is_available():
                     device = "cuda"
@@ -697,13 +691,8 @@ class LLMHandler:
 
             with self._load_model_context():
                 for i, formatted_prompt in enumerate(formatted_prompt_list):
-                    # Set seed for this item if provided
                     if seeds and i < len(seeds):
                         torch.manual_seed(seeds[i])
-                        if torch.cuda.is_available():
-                            torch.cuda.manual_seed_all(seeds[i])
-                        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-                            torch.mps.manual_seed(seeds[i])
 
                     # Generate using single-item method with batch-mode defaults
                     output_text = self._run_pt_single(
@@ -876,6 +865,9 @@ class LLMHandler:
             else:
                 seeds = seeds[:actual_batch_size]
 
+        if seeds:
+            torch.manual_seed(seeds[0])
+
         # ========== PHASE 1: CoT Generation ==========
         # Skip CoT if all metadata are user-provided OR caption is already formatted
         progress(0.1, f"Phase 1: Generating CoT metadata (once for all items)...")
@@ -941,7 +933,7 @@ class LLMHandler:
                 logger.info("Batch Phase 1: Using user-provided metadata (skipping generation)")
             else:
                 logger.info("Phase 1: Using user-provided metadata (skipping generation)")
-            metadata = {k: v for k, v in user_metadata.items() if v is not None}
+            metadata = {k: v for k, v in (user_metadata or {}).items() if v is not None}
 
         # When the caller did not supply an explicit target_duration, use the
         # duration that Phase 1 (CoT) produced so that Phase 2 code generation
@@ -1078,7 +1070,8 @@ class LLMHandler:
                 },
             }
         else:
-            # Single mode: generate codes for one item
+            if seeds:
+                torch.manual_seed(seeds[0])
             codes_output_text, status = self.generate_from_formatted_prompt(
                 formatted_prompt=formatted_prompt_with_cot,
                 cfg={
