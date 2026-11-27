@@ -1,10 +1,7 @@
 """Catalog and capability helpers for initialization flow."""
 
 import os
-from typing import List, Optional
-
-import torch
-from loguru import logger
+from typing import List
 
 
 class InitServiceCatalogMixin:
@@ -41,33 +38,6 @@ class InitServiceCatalogMixin:
 
         models.sort()
         return models
-
-    def is_flash_attention_available(self, device: Optional[str] = None) -> bool:
-        """Check whether flash attention can be used on the target device."""
-        target_device = str(device or self.device or "auto").split(":", 1)[0]
-        if target_device == "auto":
-            if not torch.cuda.is_available():
-                return False
-        else:
-            if target_device != "cuda" or not torch.cuda.is_available():
-                return False
-
-        try:
-            major, _ = torch.cuda.get_device_capability()
-            if major < 8:
-                logger.info(
-                    f"[is_flash_attention_available] GPU compute capability {major}.x < 8.0 "
-                    f"(pre-Ampere) — FlashAttention not supported, will use SDPA instead."
-                )
-                return False
-        except Exception:
-            return False
-
-        try:
-            import flash_attn
-            return True
-        except ImportError:
-            return False
 
     def is_turbo_model(self) -> bool:
         """Check whether the currently loaded model is a turbo variant."""

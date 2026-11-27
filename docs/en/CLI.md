@@ -33,7 +33,7 @@ python cli.py --configure --config config.toml
 
 - `-c` / `--config` — Path to a `.toml` configuration file to load.
 - `--configure` — Run wizard to save configuration without generating.
-- `--backend {pt,vllm,mlx}` — Select the 5Hz LM backend; overrides TOML. Defaults to a compatible installed accelerator on NVIDIA CUDA or Apple Silicon, otherwise PT.
+- `--backend pt` — Compatibility option; PyTorch is the only inference backend.
 - `--log-level` — Logging level for internal modules. One of `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. Default: `INFO`.
 
 ---

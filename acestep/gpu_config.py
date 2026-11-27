@@ -35,10 +35,6 @@ VRAM_16GB_MIN_GB = 16.0 - VRAM_16GB_TOLERANCE_GB  # treat as 16GB class if >= th
 # 16GB GPUs cannot hold DiT + VAE + text_encoder + LM simultaneously without offloading.
 VRAM_AUTO_OFFLOAD_THRESHOLD_GB = 20.0
 
-# PyTorch installation URLs for diagnostics
-PYTORCH_CUDA_INSTALL_URL = "https://download.pytorch.org/whl/cu121"
-PYTORCH_ROCM_INSTALL_URL = "https://download.pytorch.org/whl/rocm6.0"
-VALID_LM_BACKENDS = {"vllm", "pt", "mlx"}
 
 
 def is_mps_platform() -> bool:
@@ -46,7 +42,7 @@ def is_mps_platform() -> bool:
 
     This is the canonical check used across the codebase to apply
     Mac-specific configuration overrides (no compile, no quantization,
-    mlx backend, no offload, etc.).
+    PyTorch MPS, no offload, etc.).
     """
     if sys.platform != "darwin":
         return False
@@ -133,12 +129,6 @@ def get_cuda_device_capability(device_index: int = 0) -> Optional[Tuple[int, int
     return None
 
 
-def is_legacy_cuda_gpu(device_index: int = 0) -> bool:
-    """Return True for pre-Volta CUDA GPUs that should avoid vLLM defaults."""
-    capability = get_cuda_device_capability(device_index)
-    return capability is not None and capability[0] < 7 and not is_rocm_available()
-
-
 # ===========================================================================
 # Empirical VRAM measurements (GB) -- model weights only, bf16 precision
 # These values should be calibrated using scripts/profile_vram.py
@@ -156,31 +146,6 @@ MODEL_VRAM = {
     "cuda_context": 0.5,  # CUDA context + driver overhead
 }
 
-# LM model weights (bf16) + KV cache estimates
-LM_VRAM = {
-    "0.6B": {"weights": 1.2, "kv_cache_2k": 0.3, "kv_cache_4k": 0.6},
-    "1.7B": {"weights": 3.4, "kv_cache_2k": 0.5, "kv_cache_4k": 1.0},
-    "4B": {"weights": 8.0, "kv_cache_2k": 0.8, "kv_cache_4k": 1.6},
-}
-
-# DiT inference peak VRAM per batch item (approximate, depends on duration)
-# These are additional activations/intermediates on top of model weights.
-#
-# Profiling on A800 (flash attention) shows only ~0.001-0.004 GB per batch item.
-# Consumer GPUs without flash attention will be higher due to materialised
-# attention matrices.  We use conservative estimates that cover the worst case
-# (no flash attention, long sequences).
-DIT_INFERENCE_VRAM_PER_BATCH = {
-    "turbo": 0.3,  # GB per batch item (no CFG)
-    "base": 0.6,  # GB per batch item (with CFG, 2x forward)
-    "xl_turbo": 0.5,  # GB per batch item, XL (4B) no CFG, larger activations
-    "xl_base": 1.0,  # GB per batch item, XL (4B) with CFG, 2x forward
-}
-
-# Safety margin to keep free for OS/driver/fragmentation (GB)
-VRAM_SAFETY_MARGIN_GB = 0.5
-
-
 def _has_path_token(token: str, path: str) -> bool:
     """Check if *token* appears as a delimited word in *path*.
 
@@ -193,8 +158,7 @@ def _has_path_token(token: str, path: str) -> bool:
 def get_dit_type_from_path(config_path: str) -> str:
     """Derive the DiT type key from a model checkpoint path.
 
-    Returns a string suitable for looking up ``MODEL_VRAM`` (prefixed with
-    ``"dit_"``) and ``DIT_INFERENCE_VRAM_PER_BATCH``.
+    Returns the checkpoint model family.
 
     Examples::
 
@@ -239,11 +203,6 @@ class GPUConfig:
         str  # Recommended default LM model path (empty if LM not available)
     )
 
-    # LM backend restriction
-    # "all" = any backend, "pt_mlx_only" = only pt/mlx (no vllm), used for MPS (vllm requires CUDA)
-    lm_backend_restriction: str  # "all" or "pt_mlx_only"
-    recommended_backend: str  # Recommended default backend: "vllm", "pt", or "mlx"
-
     # Offload defaults
     offload_to_cpu_default: bool  # Whether offload_to_cpu should be enabled by default
     offload_dit_to_cpu_default: (
@@ -262,53 +221,6 @@ class GPUConfig:
     # Controlled via ACESTEP_SAVE_MEMORY=1 environment variable.
     save_memory_mode: bool = False
 
-    # MLX VAE decode chunk size (Apple Silicon only).
-    # Controls the maximum number of latent frames decoded in a single pass.
-    # Larger values decode faster but use more memory.
-    # Auto-detected based on available unified memory; overridable via
-    # ACESTEP_MLX_VAE_CHUNK environment variable.
-    mlx_vae_chunk_size: int = 512
-
-
-def _apply_lm_backend_compatibility_overrides(config: GPUConfig) -> GPUConfig:
-    """Apply runtime hardware overrides for LM backend selection."""
-    if is_legacy_cuda_gpu():
-        logger.info(
-            "Legacy CUDA GPU detected (pre-Volta compute capability): "
-            "forcing 5Hz LM backend recommendation to PyTorch."
-        )
-        config.lm_backend_restriction = "pt_only"
-        config.recommended_backend = "pt"
-    return config
-
-
-def resolve_lm_backend(
-    requested_backend: Optional[str],
-    gpu_config: Optional["GPUConfig"] = None,
-) -> str:
-    """Resolve the LM backend against runtime compatibility restrictions."""
-    config = gpu_config or get_global_gpu_config()
-    recommended_backend = getattr(config, "recommended_backend", "vllm")
-    lm_backend_restriction = getattr(config, "lm_backend_restriction", "all")
-
-    backend = (requested_backend or "").strip().lower()
-    if backend not in VALID_LM_BACKENDS:
-        backend = recommended_backend
-        if backend not in VALID_LM_BACKENDS:
-            backend = "pt"
-
-    if lm_backend_restriction == "pt_only":
-        return "pt"
-
-    if lm_backend_restriction == "pt_mlx_only" and backend == "vllm":
-        fallback = recommended_backend
-        if fallback not in {"pt", "mlx"}:
-            fallback = "pt"
-        return fallback
-
-    return backend
-
-
 # GPU tier configurations
 # tier6 has been split into tier6a (16-20GB) and tier6b (20-24GB) to fix the
 # 16GB regression. 16GB GPUs cannot hold all models simultaneously with the
@@ -324,8 +236,6 @@ GPU_TIER_CONFIGS = {
         "init_lm_default": False,
         "available_lm_models": [],
         "recommended_lm_model": "",
-        "lm_backend_restriction": "all",
-        "recommended_backend": "vllm",
         "offload_to_cpu_default": True,
         "offload_dit_to_cpu_default": True,
         "quantization_default": True,  # INT8 essential to fit DiT in ~4GB
@@ -343,8 +253,6 @@ GPU_TIER_CONFIGS = {
         "init_lm_default": False,
         "available_lm_models": [],
         "recommended_lm_model": "",
-        "lm_backend_restriction": "all",
-        "recommended_backend": "vllm",
         "offload_to_cpu_default": True,
         "offload_dit_to_cpu_default": True,
         "quantization_default": True,
@@ -354,7 +262,7 @@ GPU_TIER_CONFIGS = {
     "tier3": {  # 6-8GB
         # Offload mode.  DiT(4.46) + context(0.5) ≈ 5.0GB.
         # ~1.5-3GB headroom allows LM 0.6B (1.2+0.6=1.8GB) and batch=2.
-        # With CPU offload, DiT is offloaded before LM runs → vllm can use freed VRAM.
+        # With CPU offload, DiT is offloaded before LM runs → the LM can use freed VRAM.
         "max_duration_with_lm": 480,  # 8 minutes
         "max_duration_without_lm": 600,  # 10 minutes (max supported)
         "max_batch_size_with_lm": 2,
@@ -362,8 +270,6 @@ GPU_TIER_CONFIGS = {
         "init_lm_default": True,
         "available_lm_models": ["acestep-5Hz-lm-0.6B"],
         "recommended_lm_model": "acestep-5Hz-lm-0.6B",
-        "lm_backend_restriction": "all",
-        "recommended_backend": "vllm",
         "offload_to_cpu_default": True,
         "offload_dit_to_cpu_default": True,
         "quantization_default": True,
@@ -380,8 +286,6 @@ GPU_TIER_CONFIGS = {
         "init_lm_default": True,
         "available_lm_models": ["acestep-5Hz-lm-0.6B"],
         "recommended_lm_model": "acestep-5Hz-lm-0.6B",
-        "lm_backend_restriction": "all",  # vllm fits with 0.6B
-        "recommended_backend": "vllm",
         "offload_to_cpu_default": True,
         "offload_dit_to_cpu_default": True,
         "quantization_default": True,
@@ -398,8 +302,6 @@ GPU_TIER_CONFIGS = {
         "init_lm_default": True,
         "available_lm_models": ["acestep-5Hz-lm-0.6B", "acestep-5Hz-lm-1.7B"],
         "recommended_lm_model": "acestep-5Hz-lm-1.7B",
-        "lm_backend_restriction": "all",
-        "recommended_backend": "vllm",
         "offload_to_cpu_default": True,
         "offload_dit_to_cpu_default": False,  # 12-16GB can keep DiT on GPU
         "quantization_default": True,
@@ -417,8 +319,6 @@ GPU_TIER_CONFIGS = {
         "init_lm_default": True,
         "available_lm_models": ["acestep-5Hz-lm-0.6B", "acestep-5Hz-lm-1.7B"],
         "recommended_lm_model": "acestep-5Hz-lm-1.7B",
-        "lm_backend_restriction": "all",
-        "recommended_backend": "vllm",
         "offload_to_cpu_default": True,  # Still offload VAE/TextEnc to save VRAM for LM
         "offload_dit_to_cpu_default": False,
         "quantization_default": True,
@@ -439,8 +339,6 @@ GPU_TIER_CONFIGS = {
             "acestep-5Hz-lm-4B",
         ],
         "recommended_lm_model": "acestep-5Hz-lm-1.7B",
-        "lm_backend_restriction": "all",
-        "recommended_backend": "vllm",
         "offload_to_cpu_default": False,  # 20-24GB can hold all models
         "offload_dit_to_cpu_default": False,
         "quantization_default": False,  # Enough VRAM, quantization optional
@@ -459,8 +357,6 @@ GPU_TIER_CONFIGS = {
             "acestep-5Hz-lm-4B",
         ],
         "recommended_lm_model": "acestep-5Hz-lm-4B",
-        "lm_backend_restriction": "all",
-        "recommended_backend": "vllm",
         "offload_to_cpu_default": False,
         "offload_dit_to_cpu_default": False,
         "quantization_default": False,  # Plenty of VRAM
@@ -697,7 +593,7 @@ def _log_gpu_diagnostic_info(torch_module):
             "  4. On Windows: Install the ROCm-compatible PyTorch build and configure its environment"
         )
         logger.warning(
-            "  5. See docs/en/ACE-Step1.5-Rocm-Manual-Linux.md for Linux setup"
+            "  5. See README.md and requirements-rocm-linux.txt for Linux setup"
         )
         logger.warning(
             "  6. See requirements-rocm.txt for Windows ROCm setup instructions"
@@ -719,7 +615,7 @@ def _log_gpu_diagnostic_info(torch_module):
         logger.warning("     nvidia-smi  # Should list your GPU")
         logger.warning("  2. Check CUDA version compatibility")
         logger.warning("  3. Reinstall PyTorch with CUDA support:")
-        logger.warning(f"     pip install torch --index-url {PYTORCH_CUDA_INSTALL_URL}")
+        logger.warning("     Follow README.md and requirements.txt for the matching CUDA build.")
 
     else:
         logger.warning("⚠️ PyTorch build type: CPU-only")
@@ -727,12 +623,12 @@ def _log_gpu_diagnostic_info(torch_module):
         logger.warning("You have installed a CPU-only version of PyTorch!")
         logger.warning("")
         logger.warning("For NVIDIA GPUs:")
-        logger.warning(f"  pip install torch --index-url {PYTORCH_CUDA_INSTALL_URL}")
+        logger.warning("  See README.md and requirements.txt for CUDA installation.")
         logger.warning("")
         logger.warning("For AMD GPUs with ROCm:")
         logger.warning("  Windows: See requirements-rocm.txt for detailed instructions")
         logger.warning(
-            f"  Linux: pip install torch --index-url {PYTORCH_ROCM_INSTALL_URL}"
+            "  Linux: See requirements-rocm-linux.txt and README.md."
         )
         logger.warning("")
         logger.warning("For more information, see README.md section 'AMD / ROCm GPUs'")
@@ -776,40 +672,6 @@ def get_gpu_tier(gpu_memory_gb: float) -> str:
         return "unlimited"
 
 
-def _auto_mlx_vae_chunk_size(mem_gb: Optional[float] = None) -> int:
-    """Select MLX VAE decode chunk size based on available unified memory.
-
-    The ``ACESTEP_MLX_VAE_CHUNK`` environment variable takes highest
-    priority.  Otherwise the chunk size is chosen from a memory-based
-    heuristic targeting Apple Silicon unified-memory configurations.
-
-    Args:
-        mem_gb: GPU/unified memory in GB.  When ``None``, auto-detected
-            via :func:`get_gpu_memory_gb`.
-
-    Returns:
-        Chunk size as a positive integer (minimum 192, to keep
-        ``stride = chunk - 2 * overlap`` positive with overlap=64).
-    """
-    env_val = os.environ.get("ACESTEP_MLX_VAE_CHUNK")
-    if env_val is not None:
-        try:
-            return max(192, int(env_val))
-        except ValueError:
-            pass
-    if mem_gb is None:
-        mem_gb = get_gpu_memory_gb()
-    if mem_gb <= 16:
-        size = 256
-    elif mem_gb <= 36:
-        size = 512
-    elif mem_gb <= 64:
-        size = 1024
-    else:
-        size = 2048
-    return max(192, size)
-
-
 def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
     """
     Get GPU configuration based on detected or provided GPU memory.
@@ -821,9 +683,6 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
       on MPS and would error or silently fall back to eager mode.
     - ``quantization_default = False`` — torchao INT8 quantization is
       incompatible with MPS / macOS.
-    - ``recommended_backend = "mlx"`` — MLX provides native Apple Silicon
-      acceleration for the 5Hz LM; vllm requires CUDA.
-    - ``lm_backend_restriction = "pt_mlx_only"`` — vllm cannot run on MPS.
     - ``offload_to_cpu_default = False`` — Apple Silicon uses unified memory;
       offloading to CPU provides no benefit and adds overhead.
     - ``offload_dit_to_cpu_default = False`` — same reason.
@@ -846,7 +705,7 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
         logger.info(
             f"macOS MPS detected ({gpu_memory_gb:.1f} GB unified memory, tier={tier}). "
             "Applying Apple Silicon optimizations: no compile, no quantization, "
-            "mlx backend, no CPU offload."
+            "PyTorch MPS, no CPU offload."
         )
 
     config = GPUConfig(
@@ -859,13 +718,6 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
         init_lm_default=config["init_lm_default"],
         available_lm_models=config["available_lm_models"],
         recommended_lm_model=config.get("recommended_lm_model", ""),
-        # MPS: vllm requires CUDA, restrict to pt/mlx; prefer mlx for native acceleration
-        lm_backend_restriction="pt_mlx_only"
-        if _mps
-        else config.get("lm_backend_restriction", "all"),
-        recommended_backend="mlx"
-        if _mps
-        else config.get("recommended_backend", "vllm"),
         # MPS: unified memory — offloading to CPU is pointless overhead
         offload_to_cpu_default=False
         if _mps
@@ -877,18 +729,13 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
         quantization_default=False
         if _mps
         else config.get("quantization_default", True),
-        # MPS: torch.compile unsupported (redirected to mx.compile at runtime);
-        # default to False — user can opt in via the UI checkbox.
+        # MPS: keep torch.compile disabled.
         compile_model_default=False
         if _mps
         else config.get("compile_model_default", True),
         lm_memory_gb=config["lm_memory_gb"],
-        # MPS: auto-tune MLX VAE decode chunk size based on unified memory
-        mlx_vae_chunk_size=_auto_mlx_vae_chunk_size(gpu_memory_gb)
-        if _mps
-        else 512,
     )
-    return _apply_lm_backend_compatibility_overrides(config)
+    return config
 
 
 def get_lm_model_size(model_path: str) -> str:
@@ -910,107 +757,6 @@ def get_lm_model_size(model_path: str) -> str:
     else:
         # Default to smallest model assumption
         return "0.6B"
-
-
-def get_lm_gpu_memory_ratio(
-    model_path: str, total_gpu_memory_gb: float
-) -> Tuple[float, float]:
-    """
-    Calculate GPU memory utilization ratio for LM model.
-
-    This function now uses *actually free* VRAM (via torch.cuda.mem_get_info)
-    when available, instead of computing the ratio purely from total VRAM.
-    This is critical because DiT, VAE, and text encoder are already loaded
-    when the LM initializes, so the "available" memory is much less than total.
-
-    Args:
-        model_path: LM model path (e.g., "acestep-5Hz-lm-0.6B")
-        total_gpu_memory_gb: Total GPU memory in GB (used as fallback)
-
-    Returns:
-        Tuple of (gpu_memory_utilization_ratio, target_memory_gb)
-    """
-    model_size = get_lm_model_size(model_path)
-
-    # Use empirical LM VRAM measurements for target memory
-    lm_info = LM_VRAM.get(model_size, LM_VRAM["0.6B"])
-    lm_weights_gb = lm_info["weights"]
-    lm_kv_cache_gb = lm_info["kv_cache_4k"]
-
-    # Total target = model weights + KV cache + small overhead
-    target_gb = lm_weights_gb
-    total_target_gb = lm_weights_gb + lm_kv_cache_gb + 0.3  # 0.3 GB overhead
-
-    # Try to use actual free memory for a more accurate ratio
-    free_gb = None
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            free_bytes, total_bytes = torch.cuda.mem_get_info()
-            free_gb = free_bytes / (1024**3)
-            actual_total_gb = total_bytes / (1024**3)
-
-            # If MAX_CUDA_VRAM is set, use the simulated values instead
-            # because set_per_process_memory_fraction limits actual allocation
-            debug_vram = os.environ.get(DEBUG_MAX_CUDA_VRAM_ENV)
-            if debug_vram is not None:
-                try:
-                    simulated_gb = float(debug_vram)
-                    if simulated_gb < actual_total_gb:
-                        # Use reference context (matching set_per_process_memory_fraction)
-                        ref_context_gb = MODEL_VRAM.get("cuda_context", 0.5)
-                        allocator_budget_gb = max(0.5, simulated_gb - ref_context_gb)
-                        reserved_gb = torch.cuda.memory_reserved() / (1024**3)
-                        free_gb = max(0, allocator_budget_gb - reserved_gb)
-                        actual_total_gb = simulated_gb
-                except (ValueError, TypeError):
-                    pass
-
-            # The ratio is relative to total GPU memory (nano-vllm convention),
-            # but we compute it so that the LM only claims what's actually free
-            # minus a safety margin for DiT inference activations.
-            # Reserve at least 1.5 GB for DiT inference activations
-            dit_reserve_gb = 1.5
-            usable_for_lm = max(0, free_gb - dit_reserve_gb - VRAM_SAFETY_MARGIN_GB)
-
-            # Cap to what the LM actually needs
-            usable_for_lm = min(usable_for_lm, total_target_gb)
-
-            # Convert to ratio of total GPU memory
-            # nano-vllm uses: target_total_usage = total * gpu_memory_utilization
-            # We want: (total * ratio) = current_usage + usable_for_lm
-            # current_usage = live tensors in the process (memory_allocated), i.e. the
-            # DiT/VAE/text baseline at LM-init since unload() tears down the prior LM
-            # engine first. NOT the driver's total-free, which counts the caching
-            # allocator's `inactive` pool plus the fixed CUDA-context floor — both
-            # grow across reloads and inflate the ratio -> KV cache. The live-tensor
-            # view matches allocate_kv_cache (model_runner.py), so re-init no longer
-            # inflates the KV cache and the LM gets its design-sized budget.
-            current_usage_gb = torch.cuda.memory_allocated() / (1024**3)
-            desired_total_usage = current_usage_gb + usable_for_lm
-            ratio = desired_total_usage / actual_total_gb
-
-            ratio = min(0.9, max(0.1, ratio))
-
-            logger.info(
-                f"[get_lm_gpu_memory_ratio] model={model_size}, free={free_gb:.2f}GB, "
-                f"current_usage={current_usage_gb:.2f}GB, lm_target={total_target_gb:.2f}GB, "
-                f"usable_for_lm={usable_for_lm:.2f}GB, ratio={ratio:.3f}"
-            )
-            return ratio, target_gb
-    except Exception as e:
-        logger.warning(
-            f"[get_lm_gpu_memory_ratio] Failed to query free VRAM: {e}, using fallback"
-        )
-
-    # Fallback: compute ratio from total VRAM (less accurate)
-    if total_gpu_memory_gb >= 24:
-        ratio = min(0.9, max(0.2, total_target_gb / total_gpu_memory_gb))
-    else:
-        ratio = min(0.9, max(0.1, total_target_gb / total_gpu_memory_gb))
-
-    return ratio, target_gb
 
 
 def get_effective_free_vram_gb(device_index: int = 0) -> float:

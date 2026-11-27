@@ -14,7 +14,6 @@ from typing import Optional
 import torch
 import warnings
 
-from acestep.gpu_config import get_global_gpu_config as _get_gpu_cfg
 from acestep.core.generation.handler import (
     AudioCodesMixin,
     BatchPrepMixin,
@@ -23,7 +22,6 @@ from acestep.core.generation.handler import (
     ConditioningMaskMixin,
     ConditioningTargetMixin,
     ConditioningTextMixin,
-    DiffusionMixin,
     GenerateMusicDecodeMixin,
     GenerateMusicExecuteMixin,
     GenerateMusicMixin,
@@ -33,10 +31,6 @@ from acestep.core.generation.handler import (
     IoAudioMixin,
     MemoryUtilsMixin,
     MetadataMixin,
-    MlxDitInitMixin,
-    MlxVaeDecodeNativeMixin,
-    MlxVaeEncodeNativeMixin,
-    MlxVaeInitMixin,
     PaddingMixin,
     ProgressMixin,
     PromptMixin,
@@ -56,7 +50,6 @@ warnings.filterwarnings("ignore")
 
 
 class AceStepHandler(
-    DiffusionMixin,
     GenerateMusicMixin,
     GenerateMusicDecodeMixin,
     GenerateMusicPayloadMixin,
@@ -73,10 +66,6 @@ class AceStepHandler(
     InitServiceMixin,
     MemoryUtilsMixin,
     MetadataMixin,
-    MlxDitInitMixin,
-    MlxVaeDecodeNativeMixin,
-    MlxVaeEncodeNativeMixin,
-    MlxVaeInitMixin,
     PaddingMixin,
     ProgressMixin,
     PromptMixin,
@@ -139,15 +128,4 @@ class AceStepHandler(
         # Populated during initialize_service, remains None if quantization is disabled
         self.quantization = None
         
-        # MLX DiT acceleration (macOS Apple Silicon only)
-        self.mlx_decoder = None
-        self.use_mlx_dit = False
-        self.mlx_dit_compiled = False
-
-        # MLX VAE acceleration (macOS Apple Silicon only)
-        self.mlx_vae = None
-        self.use_mlx_vae = False
-        # MLX VAE decode chunk size — auto-detected from gpu_config,
-        # overridable via ACESTEP_MLX_VAE_CHUNK env var.
-        self.mlx_vae_chunk_size = _get_gpu_cfg().mlx_vae_chunk_size
 

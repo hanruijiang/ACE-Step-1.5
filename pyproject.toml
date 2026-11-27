@@ -33,9 +33,6 @@ dependencies = [
     "python-dotenv",
     "huggingface-hub",
     "safetensors==0.7.0",
-    # MLX dependencies (Apple Silicon native acceleration - macOS only)
-    "mlx>=0.25.2; sys_platform == 'darwin' and platform_machine == 'arm64'",
-    "mlx-lm>=0.20.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "modelscope",
     "pytorch-wavelets>=1.3.0",
     "pywavelets>=1.9.0",
@@ -43,10 +40,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-vllm = ["nano-vllm[cuda]; sys_platform == 'win32' or sys_platform == 'linux'"]
 quantization = [
-    "torchao>=0.16.0,<0.17.0; platform_machine != 'aarch64' and sys_platform != 'darwin'",
-    "torchao; platform_machine == 'aarch64' and sys_platform == 'linux'",
+    "torchao>=0.16.0,<0.17.0; sys_platform == 'linux'",
 ]
 
 [[tool.uv.index]]
@@ -68,7 +63,6 @@ required-environments = [
 ]
 
 [tool.uv.sources]
-nano-vllm = { path = "acestep/third_parts/nano-vllm" }
 torch = [
     { index = "pytorch-cu128", marker = "sys_platform == 'win32' or (sys_platform == 'linux' and platform_machine == 'x86_64')" },
     { index = "pytorch-cu130", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },

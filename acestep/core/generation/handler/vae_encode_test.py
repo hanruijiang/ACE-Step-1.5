@@ -49,8 +49,6 @@ class _Host(VaeEncodeMixin, VaeEncodeChunksMixin):
 
     def __init__(self):
         """Initialize deterministic state for unit tests."""
-        self.use_mlx_vae = False
-        self.mlx_vae = None
         self.device = "cpu"
         self.vae = _Vae()
         self.disable_tqdm = True
@@ -60,22 +58,9 @@ class _Host(VaeEncodeMixin, VaeEncodeChunksMixin):
         """Return no override by default."""
         return None
 
-    def _mlx_vae_encode_sample(self, audio):
-        """Return MLX sentinel result for MLX-path tests."""
-        _ = audio
-        return torch.full((1, 4, 6), 3.0)
-
 
 class VaeEncodeMixinTests(unittest.TestCase):
     """Validate orchestration and chunk path selection for tiled encode."""
-
-    def test_tiled_encode_uses_mlx_path_when_available(self):
-        """MLX path should short-circuit PyTorch path."""
-        host = _Host()
-        host.use_mlx_vae = True
-        host.mlx_vae = object()
-        out = host.tiled_encode(torch.zeros(1, 2, 16), chunk_size=8, overlap=2)
-        self.assertTrue(torch.equal(out, torch.full((1, 4, 6), 3.0)))
 
     def test_tiled_encode_direct_path_for_short_audio(self):
         """Short audio should encode directly without chunk helpers."""

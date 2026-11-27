@@ -155,7 +155,7 @@ class ServiceGenerateExecuteMixin:
         retake_variance: float = 0.0,
         flow_edit_ctx: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Execute condition preparation and diffusion using MLX or PyTorch backend."""
+        """Execute condition preparation and PyTorch diffusion."""
         generate_kwargs = {
             **generate_kwargs,
             "dcw_enabled": self._resolve_service_dcw_enabled(generate_kwargs),
@@ -167,10 +167,7 @@ class ServiceGenerateExecuteMixin:
                 self, payload=payload, generate_kwargs=generate_kwargs,
                 seed_param=seed_param, flow_edit_ctx=flow_edit_ctx,
             )
-        dit_backend = (
-            "MLX (native)" if (self.use_mlx_dit and self.mlx_decoder is not None) else f"PyTorch ({self.device})"
-        )
-        logger.info(f"[service_generate] Generating audio... (DiT backend: {dit_backend})")
+        logger.info(f"[service_generate] Generating audio with PyTorch ({self.device})")
         with torch.inference_mode():
             with self._load_model_context("model"):
                 encoder_hidden_states, encoder_attention_mask, context_latents = self.model.prepare_condition(
@@ -194,86 +191,6 @@ class ServiceGenerateExecuteMixin:
                     precomputed_lm_hints_25Hz=payload["precomputed_lm_hints_25Hz"],
                 )
 
-                if self.use_mlx_dit and self.mlx_decoder is not None:
-                    dcw_enabled = generate_kwargs["dcw_enabled"]
-                    if dcw_enabled and generate_kwargs.get("dcw_wavelet", "haar") != "haar":
-                        logger.info(
-                            "[service_generate] DCW enabled on MLX path with "
-                            "wavelet='{}'; non-Haar wavelets use the PyTorch "
-                            "bridge and fall back to native Haar only if the "
-                            "bridge dependencies are unavailable.",
-                            generate_kwargs.get("dcw_wavelet"),
-                        )
-                    try:
-                        enc_hs_nc, enc_am_nc, ctx_nc = None, None, None
-                        if audio_cover_strength < 1.0 and payload["non_cover_text_hidden_states"] is not None:
-                            non_is_covers = torch.zeros_like(payload["is_covers"])
-                            sil_exp = self.silence_latent[:, :payload["src_latents"].shape[1], :].expand(
-                                payload["src_latents"].shape[0], -1, -1
-                            )
-                            enc_hs_nc, enc_am_nc, ctx_nc = self.model.prepare_condition(
-                                text_hidden_states=payload["non_cover_text_hidden_states"],
-                                text_attention_mask=payload["non_cover_text_attention_masks"],
-                                lyric_hidden_states=payload["lyric_hidden_states"],
-                                lyric_attention_mask=payload["lyric_attention_mask"],
-                                refer_audio_acoustic_hidden_states_packed=payload["refer_audio_acoustic_hidden_states_packed"],
-                                refer_audio_order_mask=payload["refer_audio_order_mask"],
-                                hidden_states=sil_exp,
-                                attention_mask=torch.ones(
-                                    sil_exp.shape[0], sil_exp.shape[1], device=sil_exp.device, dtype=sil_exp.dtype
-                                ),
-                                silence_latent=self.silence_latent,
-                                src_latents=sil_exp,
-                                chunk_masks=payload["chunk_mask"],
-                                is_covers=non_is_covers,
-                            )
-
-                        null_cond_emb = getattr(self.model, "null_condition_emb", None)
-
-                        outputs = self._mlx_run_diffusion(
-                            encoder_hidden_states=encoder_hidden_states,
-                            encoder_attention_mask=encoder_attention_mask,
-                            context_latents=context_latents,
-                            src_latents=payload["src_latents"],
-                            seed=seed_param,
-                            infer_method=infer_method,
-                            shift=shift,
-                            timesteps=generate_kwargs.get("timesteps"),
-                            infer_steps=generate_kwargs.get("infer_steps"),
-                            guidance_scale=generate_kwargs.get("diffusion_guidance_scale", 1.0),
-                            null_condition_emb=null_cond_emb,
-                            cfg_interval_start=generate_kwargs.get("cfg_interval_start", 0.0),
-                            cfg_interval_end=generate_kwargs.get("cfg_interval_end", 1.0),
-                            audio_cover_strength=audio_cover_strength,
-                            encoder_hidden_states_non_cover=enc_hs_nc,
-                            encoder_attention_mask_non_cover=enc_am_nc,
-                            context_latents_non_cover=ctx_nc,
-                            sampler_mode=generate_kwargs.get("sampler_mode", "euler"),
-                            velocity_norm_threshold=generate_kwargs.get("velocity_norm_threshold", 0.0),
-                            velocity_ema_factor=generate_kwargs.get("velocity_ema_factor", 0.0),
-                            dcw_enabled=dcw_enabled,
-                            dcw_mode=generate_kwargs.get("dcw_mode", "double"),
-                            dcw_scaler=generate_kwargs.get("dcw_scaler", 0.05),
-                            dcw_high_scaler=generate_kwargs.get("dcw_high_scaler", 0.02),
-                            dcw_wavelet=generate_kwargs.get("dcw_wavelet", "haar"),
-                            retake_seed=retake_seed,
-                            retake_variance=retake_variance,
-                            repaint_mask=generate_kwargs.get("repaint_mask"),
-                            clean_src_latents=generate_kwargs.get("clean_src_latents"),
-                            repaint_crossfade_frames=generate_kwargs.get("repaint_crossfade_frames", 10),
-                            repaint_injection_ratio=generate_kwargs.get("repaint_injection_ratio", 0.5),
-                        )
-                        _tc = outputs.get("time_costs", {})
-                        logger.info(
-                            "[service_generate] DiT diffusion complete via MLX ({:.2f}s total, {:.3f}s/step).",
-                            _tc.get("diffusion_time_cost", 0),
-                            _tc.get("diffusion_per_step_time_cost", 0),
-                        )
-                    except Exception as exc:
-                        logger.warning("[service_generate] MLX diffusion failed ({}); falling back to PyTorch.", exc)
-                        outputs = self.model.generate_audio(**generate_kwargs)
-                else:
-                    logger.info("[service_generate] DiT diffusion via PyTorch ({})...", self.device)
-                    outputs = self.model.generate_audio(**generate_kwargs)
+                outputs = self.model.generate_audio(**generate_kwargs)
 
         return outputs, encoder_hidden_states, encoder_attention_mask, context_latents

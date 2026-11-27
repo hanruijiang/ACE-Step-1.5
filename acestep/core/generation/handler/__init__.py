@@ -7,7 +7,6 @@ from .conditioning_embed import ConditioningEmbedMixin
 from .conditioning_masks import ConditioningMaskMixin
 from .conditioning_target import ConditioningTargetMixin
 from .conditioning_text import ConditioningTextMixin
-from .diffusion import DiffusionMixin
 from .generate_music import GenerateMusicMixin
 from .generate_music_decode import GenerateMusicDecodeMixin
 from .generate_music_execute import GenerateMusicExecuteMixin
@@ -17,10 +16,6 @@ from .init_service import InitServiceMixin
 from .io_audio import IoAudioMixin
 from .memory_utils import MemoryUtilsMixin
 from .metadata_utils import MetadataMixin
-from .mlx_dit_init import MlxDitInitMixin
-from .mlx_vae_decode_native import MlxVaeDecodeNativeMixin
-from .mlx_vae_encode_native import MlxVaeEncodeNativeMixin
-from .mlx_vae_init import MlxVaeInitMixin
 from .padding_utils import PaddingMixin
 from .prompt_utils import PromptMixin
 from .progress import ProgressMixin
@@ -42,7 +37,6 @@ __all__ = [
     "ConditioningMaskMixin",
     "ConditioningTargetMixin",
     "ConditioningTextMixin",
-    "DiffusionMixin",
     "GenerateMusicMixin",
     "GenerateMusicDecodeMixin",
     "GenerateMusicExecuteMixin",
@@ -52,10 +46,6 @@ __all__ = [
     "IoAudioMixin",
     "MemoryUtilsMixin",
     "MetadataMixin",
-    "MlxDitInitMixin",
-    "MlxVaeDecodeNativeMixin",
-    "MlxVaeEncodeNativeMixin",
-    "MlxVaeInitMixin",
     "PaddingMixin",
     "PromptMixin",
     "ProgressMixin",

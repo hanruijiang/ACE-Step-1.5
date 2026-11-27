@@ -470,10 +470,6 @@ def _expand_audio_path(path_str: Optional[str]) -> Optional[str]:
         return Path(path_str).expanduser().absolute().as_posix()
 
 
-def _parse_bool(value: str) -> bool:
-    return str(value).lower() in {"true", "1", "yes", "y"}
-
-
 def _resolve_device(device: str) -> str:
     if device == "auto":
         if hasattr(torch, 'xpu') and torch.xpu.is_available():
@@ -980,7 +976,7 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
         try:
             config_to_save = {
                 k: v for k, v in vars(args).items()
-                if k not in ['config'] and not k.startswith('_')
+                if k not in {'config', 'backend', 'use_flash_attention'} and not k.startswith('_')
             }
             with open(config_filename, 'w') as f:
                 toml.dump(config_to_save, f)
@@ -997,11 +993,28 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
     return args, not configure_only
 
 
+_cpu_threads_configured = False
+
+
+def _configure_cpu_threads_if_requested() -> None:
+    """Apply the opt-in PyTorch CPU thread limit once per CLI process."""
+    global _cpu_threads_configured
+    if _cpu_threads_configured:
+        return
+    if os.environ.get("ACESTEP_CONFIGURE_THREADS", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return
+    threads = max(1, (os.cpu_count() or 1) - 2)
+    torch.set_num_threads(threads)
+    torch.set_num_interop_threads(threads)
+    _cpu_threads_configured = True
+
+
 def main():
     """
     Main function to run ACE-Step music generation from the command line.
     """
 
+    _configure_cpu_threads_if_requested()
     gpu_config = get_gpu_config()
     set_global_gpu_config(gpu_config)
     mps_available = is_mps_platform()
@@ -1042,8 +1055,8 @@ def main():
         "--backend",
         type=str,
         default=None,
-        choices=["vllm", "pt", "mlx"],
-        help="5Hz LM backend. Auto-detected if not specified: 'mlx' on Apple Silicon, 'vllm' on CUDA, 'pt' otherwise.",
+        choices=["pt", "pyTorch"],
+        help="Compatibility option: PyTorch is the only inference backend."
     )
     parser.add_argument(
         "--log-level",
@@ -1178,9 +1191,14 @@ def main():
         # for seed and use_random_seed together, so it can't hit this case.
         args._use_random_seed_explicit = "use_random_seed" in config_from_file
 
-    # CLI --backend overrides config file and auto-detection
+    # Validate legacy configuration fields before entering the wizard.
     if cli_args.backend is not None:
         args.backend = cli_args.backend
+    if args.backend not in (None, "pt", "pyTorch"):
+        parser.error(f"Unsupported LM backend: {args.backend}. Only PyTorch is supported.")
+    args.backend = "pt"
+    if args.use_flash_attention:
+        parser.error("External Flash Attention is no longer supported; PyTorch SDPA is used.")
     if cli_args.log_level is not None:
         args.log_level = cli_args.log_level
     try:
@@ -1396,21 +1414,6 @@ def main():
         parser.error("FFmpeg is required for compressed audio output; install it and add it to PATH.")
 
     # --- Handler Initialization ---
-    if args.backend == "pyTorch":
-        args.backend = "pt"
-    if args.backend is None:
-        import importlib.util
-        if device == "mps":
-            from acestep.models.mlx import mlx_available
-            args.backend = "mlx" if mlx_available() and importlib.util.find_spec("mlx_lm") else "pt"
-        elif device == "cuda" and not getattr(torch.version, "hip", None):
-            from acestep.llm_backend_compat import get_vllm_preflight_warning
-            args.backend = "vllm" if importlib.util.find_spec("nanovllm") and not get_vllm_preflight_warning(device=device) else "pt"
-        else:
-            args.backend = "pt"
-    if args.backend not in {"vllm", "pt", "mlx"}:
-        parser.error(f"Unsupported LM backend: {args.backend}")
-
     print("Initializing ACE-Step handlers...")
     dit_handler = AceStepHandler(project_root=args.project_root, checkpoint_dir=args.checkpoint_dir)
     llm_handler = LLMHandler()
@@ -1494,9 +1497,7 @@ def main():
         else:
             print(f"Warning: DiT model '{config_name}' not found locally and not in registry. Skipping auto-download.")
 
-    use_flash_attention = args.use_flash_attention
-    if use_flash_attention is None:
-        use_flash_attention = dit_handler.is_flash_attention_available(device)
+    use_flash_attention = False
 
     compile_model = os.environ.get("ACESTEP_COMPILE_MODEL", "").strip().lower() in {
         "1", "true", "yes", "y", "on",

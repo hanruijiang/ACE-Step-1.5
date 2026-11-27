@@ -141,9 +141,7 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
                     exc,
                 )
 
-        if use_flash_attention and self.is_flash_attention_available(device):
-            attn_implementation = "flash_attention_2"
-        elif device == "cuda" and not gpu_config.cuda_supports_bfloat16():
+        if device == "cuda" and not gpu_config.cuda_supports_bfloat16():
             # Pre-Ampere GPUs (compute capability < 8.0) run in float16 which
             # can overflow in SDPA's fused softmax with longer sequences,
             # producing NaN/Inf latents (see issues #924, #927).  Eager
@@ -154,11 +152,6 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
             )
             attn_implementation = "eager"
         else:
-            if use_flash_attention:
-                logger.warning(
-                    f"[initialize_service] Flash attention requested but unavailable for device={device}. "
-                    "Falling back to SDPA."
-                )
             attn_implementation = "sdpa"
 
         attn_candidates = [attn_implementation]

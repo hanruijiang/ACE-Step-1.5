@@ -221,8 +221,6 @@ class GenerateMusicMixin:
                 from ``dcw_scaler`` at ``t=1`` to 0 at ``t=0``.
             dcw_high_scaler: High-band strength — only used in ``"double"`` mode.
             dcw_wavelet: PyWavelets basis, e.g. ``"haar"`` / ``"db4"`` / ``"sym8"``.
-                On the MLX path only ``"haar"`` is implemented natively; other
-                bases warn once and fall back to Haar.
             timesteps: Optional custom timestep schedule.
             use_tiled_decode: Whether tiled VAE decode is used.
             latent_shift: Additive latent post-processing value.

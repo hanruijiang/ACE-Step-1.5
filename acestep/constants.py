@@ -196,18 +196,3 @@ LM_MODEL_NAMES = {
     "4B": "acestep-5Hz-lm-4B",
 }
 
-
-# ==============================================================================
-# Debug Constants
-# ==============================================================================
-
-# Tensor debug mode (values: "OFF" | "ON" | "VERBOSE")
-TENSOR_DEBUG_MODE = "OFF"
-
-# Placeholder debug switches for other main functionality (default "OFF")
-# Update names/usage as features adopt them.
-DEBUG_INFERENCE = "OFF"
-DEBUG_AUDIO = "OFF"
-DEBUG_LLM = "OFF"
-DEBUG_MODEL_LOADING = "OFF"
-DEBUG_GPU = "OFF"

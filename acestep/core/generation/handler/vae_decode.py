@@ -36,18 +36,6 @@ class VaeDecodeMixin:
         Returns:
             Decoded waveform tensor shaped ``[batch, audio_channels, samples]``.
         """
-        # ---- MLX fast path (macOS Apple Silicon) ----
-        if self.use_mlx_vae and self.mlx_vae is not None:
-            try:
-                result = self._mlx_vae_decode(latents)
-                return result
-            except Exception as exc:
-                logger.warning(
-                    f"[tiled_decode] MLX VAE decode failed ({type(exc).__name__}: {exc}), "
-                    f"falling back to PyTorch VAE..."
-                )
-
-        # ---- PyTorch path (CUDA / MPS / CPU) ----
         if chunk_size is None:
             chunk_size = self._get_auto_decode_chunk_size()
         if offload_wav_to_cpu is None:

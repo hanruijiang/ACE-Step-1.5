@@ -1,4 +1,4 @@
 # AMD ROCm Linux: install matching ROCm torch and torchaudio first.
 -r requirements-common.txt
 
-# Use --backend pt; optional quantization requires a compatible torchao build.
+# Optional quantization requires a compatible torchao build.

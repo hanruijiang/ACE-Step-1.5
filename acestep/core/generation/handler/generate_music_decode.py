@@ -137,49 +137,37 @@ class GenerateMusicDecodeMixin:
                     f"allocated={self._memory_allocated()/1024**3:.2f}GB, "
                     f"max={self._max_memory_allocated()/1024**3:.2f}GB"
                 )
-                using_mlx_vae = self.use_mlx_vae and self.mlx_vae is not None
                 vae_cpu = False
                 vae_device = None
-                if not using_mlx_vae:
-                    vae_cpu = os.environ.get("ACESTEP_VAE_ON_CPU", "0").lower() in ("1", "true", "yes")
-                    if not vae_cpu:
-                        if self.device == "mps":
-                            logger.info(
-                                "[generate_music] MPS device: skipping VRAM check "
-                                "(unified memory), keeping VAE on MPS"
+                vae_cpu = os.environ.get("ACESTEP_VAE_ON_CPU", "0").lower() in ("1", "true", "yes")
+                if not vae_cpu:
+                    if self.device == "mps":
+                        logger.info(
+                            "[generate_music] MPS device: skipping VRAM check "
+                            "(unified memory), keeping VAE on MPS"
+                        )
+                    else:
+                        effective_free = get_effective_free_vram_gb()
+                        logger.info(
+                            "[generate_music] Effective free VRAM before VAE decode: "
+                            f"{effective_free:.2f} GB"
+                        )
+                        if effective_free < 0.5:
+                            logger.warning(
+                                "[generate_music] Only "
+                                f"{effective_free:.2f} GB free VRAM; auto-enabling CPU VAE decode"
                             )
-                        else:
-                            effective_free = get_effective_free_vram_gb()
-                            logger.info(
-                                "[generate_music] Effective free VRAM before VAE decode: "
-                                f"{effective_free:.2f} GB"
-                            )
-                            if effective_free < 0.5:
-                                logger.warning(
-                                    "[generate_music] Only "
-                                    f"{effective_free:.2f} GB free VRAM; auto-enabling CPU VAE decode"
-                                )
-                                vae_cpu = True
-                    if vae_cpu:
-                        logger.info("[generate_music] Moving VAE to CPU for decode (ACESTEP_VAE_ON_CPU=1)...")
-                        vae_device = next(self.vae.parameters()).device
-                        self.vae = self.vae.cpu()
-                        pred_latents_for_decode = pred_latents_for_decode.cpu()
-                        self._empty_cache()
+                            vae_cpu = True
+                if vae_cpu:
+                    logger.info("[generate_music] Moving VAE to CPU for decode (ACESTEP_VAE_ON_CPU=1)...")
+                    vae_device = next(self.vae.parameters()).device
+                    self.vae = self.vae.cpu()
+                    pred_latents_for_decode = pred_latents_for_decode.cpu()
+                    self._empty_cache()
                 try:
                     if use_tiled_decode:
                         logger.info("[generate_music] Using tiled VAE decode to reduce VRAM usage...")
                         pred_wavs = self.tiled_decode(pred_latents_for_decode)
-                    elif using_mlx_vae:
-                        try:
-                            pred_wavs = self._mlx_vae_decode(pred_latents_for_decode)
-                        except Exception as exc:
-                            logger.warning(
-                                f"[generate_music] MLX direct decode failed ({exc}), falling back to PyTorch"
-                            )
-                            decoder_output = self.vae.decode(pred_latents_for_decode)
-                            pred_wavs = decoder_output.sample
-                            del decoder_output
                     else:
                         decoder_output = self.vae.decode(pred_latents_for_decode)
                         pred_wavs = decoder_output.sample

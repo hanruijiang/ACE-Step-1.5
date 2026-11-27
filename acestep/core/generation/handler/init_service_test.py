@@ -67,10 +67,6 @@ class _Host(InitServiceMixin):
         self.compiled = False
         self.quantization = None
         self.last_init_params = None
-        self.mlx_decoder = None
-        self.use_mlx_dit = False
-        self.mlx_vae = None
-        self.use_mlx_vae = False
         self.current_offload_cost = 0.0
 
     def _get_project_root(self):
@@ -80,16 +76,6 @@ class _Host(InitServiceMixin):
     def _get_vae_dtype(self, _device: str = "cpu"):
         """Return a stable dtype for VAE-related tests."""
         return torch.float32
-
-    def _init_mlx_dit(self, compile_model: bool = False) -> bool:
-        """Stub MLX DiT init hook and always report unavailable in tests."""
-        _ = compile_model
-        return False
-
-    def _init_mlx_vae(self) -> bool:
-        """Stub MLX VAE init hook and always report unavailable in tests."""
-        return False
-
 
 class InitServiceMixinTests(unittest.TestCase):
     """Behavioral tests for InitServiceMixin helpers and initialization flow."""
@@ -215,44 +201,6 @@ class InitServiceMixinTests(unittest.TestCase):
         host.config = types.SimpleNamespace(is_turbo=True)
         self.assertTrue(host.is_turbo_model())
 
-    def test_is_flash_attention_available_rejects_non_cuda(self):
-        """It rejects FlashAttention on non-CUDA targets."""
-        host = _Host(project_root="K:/fake_root", device="cpu")
-        self.assertFalse(host.is_flash_attention_available())
-        self.assertFalse(host.is_flash_attention_available(device="mps"))
-
-    def test_is_flash_attention_available_true_when_cuda_and_module_present(self):
-        """It reports available when CUDA, Ampere+, and ``flash_attn`` are present."""
-        host = _Host(project_root="K:/fake_root", device="cuda")
-        with patch("torch.cuda.is_available", return_value=True):
-            with patch("torch.cuda.get_device_capability", return_value=(8, 0)):
-                with patch.dict("sys.modules", {"flash_attn": types.SimpleNamespace()}):
-                    self.assertTrue(host.is_flash_attention_available())
-
-    def test_is_flash_attention_available_false_when_pre_ampere_gpu(self):
-        """It rejects FlashAttention on pre-Ampere CUDA GPUs."""
-        host = _Host(project_root="K:/fake_root", device="cuda")
-        with patch("torch.cuda.is_available", return_value=True):
-            with patch("torch.cuda.get_device_capability", return_value=(7, 5)):
-                with patch.dict("sys.modules", {"flash_attn": types.SimpleNamespace()}):
-                    self.assertFalse(host.is_flash_attention_available())
-
-    def test_is_flash_attention_available_false_when_module_missing(self):
-        """It rejects FlashAttention when the module import fails."""
-        host = _Host(project_root="K:/fake_root", device="cuda")
-        real_import = builtins.__import__
-
-        def fake_import(name, globals_=None, locals_=None, fromlist=(), level=0):
-            """Raise ImportError for flash_attn while delegating all other imports."""
-            if name == "flash_attn":
-                raise ImportError("flash_attn missing")
-            return real_import(name, globals_, locals_, fromlist, level)
-
-        with patch("torch.cuda.is_available", return_value=True):
-            with patch("torch.cuda.get_device_capability", return_value=(8, 0)):
-                with patch("builtins.__import__", side_effect=fake_import):
-                    self.assertFalse(host.is_flash_attention_available())
-
     def test_resolve_initialize_device_auto_prefers_cuda(self):
         """It prefers CUDA first when resolving the ``auto`` device mode."""
         host = _Host(project_root="K:/fake_root", device="auto")
@@ -261,29 +209,27 @@ class InitServiceMixinTests(unittest.TestCase):
                 with patch("torch.xpu", new=types.SimpleNamespace(is_available=lambda: False), create=True):
                     self.assertEqual(host._resolve_initialize_device("auto"), "cuda")
 
-    def test_configure_initialize_runtime_redirects_compile_on_mps(self):
-        """It converts MPS compile intent to MLX compile and disables quantization."""
+    def test_configure_initialize_runtime_disables_compile_on_mps(self):
+        """It disables compile and quantization on MPS."""
         host = _Host(project_root="K:/fake_root", device="mps")
-        compile_model, quantization, mlx_compile_requested = host._configure_initialize_runtime(
+        compile_model, quantization = host._configure_initialize_runtime(
             device="mps",
             compile_model=True,
             quantization="int8_weight_only",
         )
         self.assertFalse(compile_model)
         self.assertIsNone(quantization)
-        self.assertTrue(mlx_compile_requested)
 
     def test_configure_initialize_runtime_keeps_settings_on_cuda(self):
         """It leaves compile and quantization flags unchanged for CUDA backends."""
         host = _Host(project_root="K:/fake_root", device="cuda")
-        compile_model, quantization, mlx_compile_requested = host._configure_initialize_runtime(
+        compile_model, quantization = host._configure_initialize_runtime(
             device="cuda",
             compile_model=True,
             quantization="int8_weight_only",
         )
         self.assertTrue(compile_model)
         self.assertEqual(quantization, "int8_weight_only")
-        self.assertFalse(mlx_compile_requested)
 
     def test_resolve_initialize_device_requested_cuda_falls_back_to_cpu(self):
         """It falls back from CUDA to CPU when no accelerator backends are available."""
@@ -327,8 +273,8 @@ class InitServiceMixinTests(unittest.TestCase):
                 )
         self.assertEqual(result, ("ERROR: Failed to download main model: boom", False))
 
-    def test_build_initialize_status_message_reports_mlx_compile_label(self):
-        """It renders the mx.compile label when MLX compile redirection is active."""
+    def test_build_initialize_status_message_reports_compile_label(self):
+        """It renders the PyTorch compile status."""
         msg = _Host._build_initialize_status_message(
             device="mps",
             model_path="m",
@@ -337,30 +283,12 @@ class InitServiceMixinTests(unittest.TestCase):
             dtype=torch.float32,
             attention="sdpa",
             compile_model=False,
-            mlx_compile_requested=True,
             offload_to_cpu=False,
             offload_dit_to_cpu=False,
             quantization="w8a8_dynamic",
-            mlx_dit_status="Active",
-            mlx_vae_status="Active",
         )
-        self.assertIn("Compiled: mx.compile (MLX)", msg)
+        self.assertIn("Compiled: False", msg)
         self.assertIn("Quantization: w8a8_dynamic", msg)
-
-    def test_initialize_mlx_backends_disables_dit_when_requested(self):
-        """It disables MLX DiT state when caller explicitly opts out."""
-        host = _Host(project_root="K:/fake_root", device="cpu")
-        host.mlx_decoder = object()
-        host.use_mlx_dit = True
-        dit_status, vae_status = host._initialize_mlx_backends(
-            device="cpu",
-            use_mlx_dit=False,
-            mlx_compile_requested=False,
-        )
-        self.assertEqual(dit_status, "Disabled by user")
-        self.assertIn("Unavailable", vae_status)
-        self.assertIsNone(host.mlx_decoder)
-        self.assertFalse(host.use_mlx_dit)
 
     def test_initialize_service_returns_model_precheck_failure(self):
         """It returns precheck failures without continuing initialization work."""
@@ -419,12 +347,11 @@ class InitServiceMixinTests(unittest.TestCase):
                             "_load_text_encoder_and_tokenizer",
                             return_value="K:/custom_root/checkpoints/Qwen3-Embedding-0.6B",
                         ):
-                            with patch.object(host, "_initialize_mlx_backends", return_value=("Disabled", "Disabled")):
-                                status, ok = host.initialize_service(
-                                    project_root="K:/custom_root",
-                                    config_path="acestep-v15-turbo",
-                                    device="cpu",
-                                )
+                            status, ok = host.initialize_service(
+                                project_root="K:/custom_root",
+                                config_path="acestep-v15-turbo",
+                                device="cpu",
+                            )
         self.assertTrue(ok)
         expected_model_path = str(Path("K:/custom_root/checkpoints/acestep-v15-turbo").resolve())
         self.assertEqual(os.path.normpath(host._captured_model_path), expected_model_path)
@@ -448,16 +375,11 @@ class InitServiceMixinTests(unittest.TestCase):
                             "_load_text_encoder_and_tokenizer",
                             return_value="K:/fake_root/checkpoints/Qwen3-Embedding-0.6B",
                         ):
-                            with patch.object(
-                                host,
-                                "_initialize_mlx_backends",
-                                return_value=("Disabled", "Disabled"),
-                            ):
-                                status, ok = host.initialize_service(
-                                    project_root="K:/fake_root",
-                                    config_path="acestep-v15-turbo",
-                                    device="cpu",
-                                )
+                            status, ok = host.initialize_service(
+                                project_root="K:/fake_root",
+                                config_path="acestep-v15-turbo",
+                                device="cpu",
+                            )
         self.assertTrue(ok)
         self.assertIn("Model initialized successfully on cpu", status)
         expected_keys = {
@@ -470,7 +392,6 @@ class InitServiceMixinTests(unittest.TestCase):
             "offload_to_cpu",
             "offload_dit_to_cpu",
             "quantization",
-            "use_mlx_dit",
             "prefer_source",
             "vae_checkpoint",
         }
@@ -506,17 +427,12 @@ class InitServiceMixinTests(unittest.TestCase):
                                 "_load_text_encoder_and_tokenizer",
                                 return_value="K:/fake_root/checkpoints/Qwen3-Embedding-0.6B",
                             ):
-                                with patch.object(
-                                    host,
-                                    "_initialize_mlx_backends",
-                                    return_value=("Disabled", "Disabled"),
-                                ):
-                                    status, ok = host.initialize_service(
-                                        project_root="K:/fake_root",
-                                        config_path="acestep-v15-turbo",
-                                        device="cpu",
-                                        # No explicit vae_checkpoint.
-                                    )
+                                status, ok = host.initialize_service(
+                                    project_root="K:/fake_root",
+                                    config_path="acestep-v15-turbo",
+                                    device="cpu",
+                                    # No explicit vae_checkpoint.
+                                )
         self.assertTrue(ok)
         self.assertEqual(captured["vae_variant"], "scragvae")
         self.assertEqual(host.last_init_params["vae_checkpoint"], "scragvae")
@@ -552,17 +468,12 @@ class InitServiceMixinTests(unittest.TestCase):
                                 "_load_text_encoder_and_tokenizer",
                                 return_value="K:/fake_root/checkpoints/Qwen3-Embedding-0.6B",
                             ):
-                                with patch.object(
-                                    host,
-                                    "_initialize_mlx_backends",
-                                    return_value=("Disabled", "Disabled"),
-                                ):
-                                    status, ok = host.initialize_service(
-                                        project_root="K:/fake_root",
-                                        config_path="acestep-v15-turbo",
-                                        device="cpu",
-                                        vae_checkpoint="official",
-                                    )
+                                status, ok = host.initialize_service(
+                                    project_root="K:/fake_root",
+                                    config_path="acestep-v15-turbo",
+                                    device="cpu",
+                                    vae_checkpoint="official",
+                                )
         self.assertTrue(ok)
         self.assertEqual(captured["vae_variant"], "official")
         self.assertEqual(host.last_init_params["vae_checkpoint"], "official")
@@ -610,8 +521,7 @@ class InitServiceMixinTests(unittest.TestCase):
             with patch("torch.cuda.is_available", return_value=True), \
                     patch("torch.cuda.empty_cache"), \
                     patch("torch.cuda.synchronize", side_effect=RuntimeError("oom during sync")), \
-                    patch("transformers.AutoModel.from_pretrained", return_value=_DummyModel()), \
-                    patch.object(host, "is_flash_attention_available", return_value=False):
+                    patch("transformers.AutoModel.from_pretrained", return_value=_DummyModel()):
                 attn = host._load_main_model_from_checkpoint(
                     model_checkpoint_path=checkpoint_dir,
                     device="cpu",
@@ -732,8 +642,7 @@ class InitServiceMixinTests(unittest.TestCase):
                 patch.object(host, "_validate_quantization_setup", side_effect=ImportError("torchao incompatible")), \
                 patch.object(host, "_load_main_model_from_checkpoint", side_effect=_fake_load_main_model), \
                 patch.object(host, "_load_vae_model", return_value="vae"), \
-                patch.object(host, "_load_text_encoder_and_tokenizer", return_value="te"), \
-                patch.object(host, "_initialize_mlx_backends", return_value=("Disabled", "Disabled")):
+                patch.object(host, "_load_text_encoder_and_tokenizer", return_value="te"):
             status, ok = host.initialize_service(
                 project_root="K:/fake_root",
                 config_path="acestep-v15-turbo",
@@ -944,16 +853,11 @@ class RocmDtypeTests(unittest.TestCase):
                                 "_load_text_encoder_and_tokenizer",
                                 return_value="te",
                             ):
-                                with patch.object(
-                                    host,
-                                    "_initialize_mlx_backends",
-                                    return_value=("Disabled", "Disabled"),
-                                ):
-                                    _, ok = host.initialize_service(
-                                        project_root="K:/fake_root",
-                                        config_path="acestep-v15-turbo",
-                                        device="cuda",
-                                    )
+                                _, ok = host.initialize_service(
+                                    project_root="K:/fake_root",
+                                    config_path="acestep-v15-turbo",
+                                    device="cuda",
+                                )
         self.assertTrue(ok)
         self.assertEqual(host.dtype, torch.float32)
 
@@ -981,16 +885,11 @@ class RocmDtypeTests(unittest.TestCase):
                                 "_load_text_encoder_and_tokenizer",
                                 return_value="te",
                             ):
-                                with patch.object(
-                                    host,
-                                    "_initialize_mlx_backends",
-                                    return_value=("Disabled", "Disabled"),
-                                ):
-                                    _, ok = host.initialize_service(
-                                        project_root="K:/fake_root",
-                                        config_path="acestep-v15-turbo",
-                                        device="cuda",
-                                    )
+                                _, ok = host.initialize_service(
+                                    project_root="K:/fake_root",
+                                    config_path="acestep-v15-turbo",
+                                    device="cuda",
+                                )
         self.assertTrue(ok)
         self.assertEqual(host.dtype, torch.bfloat16)
 
@@ -1018,16 +917,11 @@ class RocmDtypeTests(unittest.TestCase):
                                 "_load_text_encoder_and_tokenizer",
                                 return_value="te",
                             ):
-                                with patch.object(
-                                    host,
-                                    "_initialize_mlx_backends",
-                                    return_value=("Disabled", "Disabled"),
-                                ):
-                                    _, ok = host.initialize_service(
-                                        project_root="K:/fake_root",
-                                        config_path="acestep-v15-turbo",
-                                        device="cuda",
-                                    )
+                                _, ok = host.initialize_service(
+                                    project_root="K:/fake_root",
+                                    config_path="acestep-v15-turbo",
+                                    device="cuda",
+                                )
         self.assertTrue(ok)
         self.assertEqual(host.dtype, torch.float16)
 

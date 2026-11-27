@@ -25,5 +25,4 @@
 
 -r requirements-common.txt
 
-# Use the pt backend. Do not install CUDA Triton/Flash Attention wheels.
 # Quantization requires a compatible torchao build; not enabled here.

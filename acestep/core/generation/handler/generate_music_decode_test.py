@@ -90,8 +90,6 @@ class _Host(GenerateMusicDecodeMixin):
         self.estimate_calls = []
         self.progress_calls = []
         self.device = "cpu"
-        self.use_mlx_vae = True
-        self.mlx_vae = object()
         self.vae = _FakeVae()
 
     def _update_progress_estimate(self, **kwargs):
@@ -114,11 +112,6 @@ class _Host(GenerateMusicDecodeMixin):
     def _max_memory_allocated(self):
         """Return deterministic max-memory value for debug logging."""
         return 0.0
-
-    def _mlx_vae_decode(self, latents):
-        """Return deterministic decoded waveform for MLX decode branch."""
-        _ = latents
-        return torch.ones(1, 2, 8)
 
     def tiled_decode(self, latents):
         """Return deterministic decoded waveform for tiled decode branch."""
@@ -219,13 +212,11 @@ class GenerateMusicDecodeMixinTests(unittest.TestCase):
                 return self
 
         class _FailingHost(_Host):
-            """Host variant that forces non-MLX VAE decode and tracks cache clears."""
+            """Host variant that forces PyTorch VAE decode and tracks cache clears."""
 
             def __init__(self):
-                """Set non-MLX state so CPU offload path is exercised deterministically."""
+                """Set PyTorch state so CPU offload path is exercised deterministically."""
                 super().__init__()
-                self.use_mlx_vae = False
-                self.mlx_vae = None
                 self.vae = _FailingVae()
                 self.empty_cache_calls = 0
 
@@ -283,13 +274,11 @@ class GenerateMusicDecodeMixinTests(unittest.TestCase):
                 return self
 
         class _SuccessHost(_Host):
-            """Host that forces non-MLX VAE so the CPU-decode path is exercised."""
+            """Host that forces PyTorch VAE so the CPU-decode path is exercised."""
 
             def __init__(self):
-                """Configure non-MLX state and a tracking VAE."""
+                """Configure PyTorch state and a tracking VAE."""
                 super().__init__()
-                self.use_mlx_vae = False
-                self.mlx_vae = None
                 self.vae = _SuccessVae()
                 self.device = "cuda"
 

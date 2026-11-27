@@ -15,10 +15,4 @@ torchaudio==2.10.0+cu130; sys_platform == 'linux' and platform_machine == 'aarch
 
 -r requirements-common.txt
 
-# Apple Silicon native inference
-mlx>=0.25.2; sys_platform == 'darwin' and platform_machine == 'arm64'
-mlx-lm>=0.20.0; sys_platform == 'darwin' and platform_machine == 'arm64'
-
-# Optional NVIDIA acceleration (install separately in the same environment):
-# pip install -e "./acestep/third_parts/nano-vllm[cuda]"
 # Optional quantization: install a torchao build compatible with your PyTorch.
