@@ -7,6 +7,22 @@ from typing import List
 class InitServiceCatalogMixin:
     """Checkpoint discovery and backend capability helpers."""
 
+    def _get_project_root(self) -> str:
+        """Get project root directory path.
+
+        Returns the directory set by the ``ACESTEP_PROJECT_ROOT`` environment
+        variable when present, otherwise the current working directory.  Using
+        the working directory (rather than ``__file__``) keeps generated cache
+        files and the checkpoints folder next to where the user launched the
+        process, regardless of whether the package was installed via
+        ``pip install .`` or run from source.
+        """
+        from acestep.model_downloader import get_project_root
+        root = getattr(self, "project_root", None)
+        if root:
+            return os.path.abspath(os.path.expanduser(root))
+        return str(get_project_root())
+
     def _device_type(self) -> str:
         """Normalize the host device value to a backend type string."""
         if isinstance(self.device, str):

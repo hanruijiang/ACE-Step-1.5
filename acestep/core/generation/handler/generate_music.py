@@ -237,7 +237,6 @@ class GenerateMusicMixin:
             No exceptions are re-raised. Runtime failures are converted into the
             returned error payload.
         """
-        progress = self._resolve_generate_music_progress(progress)
         if self.model is None or self.vae is None or self.text_tokenizer is None or self.text_encoder is None:
             readiness_error = self._validate_generate_music_readiness()
             return readiness_error
@@ -364,7 +363,7 @@ class GenerateMusicMixin:
                 _resolve_repaint_config(repaint_mode, repaint_strength)
             )
 
-            service_run = self._run_generate_music_service_with_progress(
+            service_run = self._run_generate_music_service(
                 progress=progress,
                 actual_batch_size=actual_batch_size,
                 audio_duration=audio_duration,
@@ -403,13 +402,10 @@ class GenerateMusicMixin:
                 flow_edit_n_avg=flow_edit_n_avg,
             )
             outputs = service_run["outputs"]
-            infer_steps_for_progress = service_run["infer_steps_for_progress"]
 
             pred_latents, time_costs = self._prepare_generate_music_decode_state(
                 outputs=outputs,
-                infer_steps_for_progress=infer_steps_for_progress,
-                actual_batch_size=actual_batch_size,
-                audio_duration=audio_duration,
+
                 latent_shift=latent_shift,
                 latent_rescale=latent_rescale,
             )

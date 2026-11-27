@@ -87,18 +87,6 @@ class _Host(GenerateMusicMixin):
         """Return whether this host simulates a turbo model."""
         return self._is_turbo
 
-    def _resolve_generate_music_progress(self, progress):
-        """Return provided callback or deterministic no-op callback."""
-        self.calls["_resolve_generate_music_progress"] = bool(progress)
-        if progress is not None:
-            return progress
-
-        def _noop(*_args, **_kwargs):
-            """Ignore progress updates in tests."""
-            return None
-
-        return _noop
-
     def _validate_generate_music_readiness(self):
         """Return deterministic readiness error payload."""
         self.calls["_validate_generate_music_readiness"] = True
@@ -137,17 +125,16 @@ class _Host(GenerateMusicMixin):
     def _prepare_generate_music_service_inputs(self, **kwargs):
         """Capture service-input args and return deterministic payload."""
         self.calls["_prepare_generate_music_service_inputs"] = kwargs
-        return {"should_return_intermediate": True}
+        return {"should_return_intermediate": False}
 
-    def _run_generate_music_service_with_progress(self, **kwargs):
+    def _run_generate_music_service(self, **kwargs):
         """Capture service execution args and return deterministic model outputs."""
-        self.calls["_run_generate_music_service_with_progress"] = kwargs
+        self.calls["_run_generate_music_service"] = kwargs
         return {
             "outputs": {
                 "target_latents": torch.ones(1, 4, 3),
                 "time_costs": {"total_time_cost": 1.0, "diffusion_per_step_time_cost": 0.1},
             },
-            "infer_steps_for_progress": 8,
         }
 
     def _prepare_generate_music_decode_state(self, **kwargs):
@@ -186,8 +173,8 @@ class GenerateMusicMixinTests(unittest.TestCase):
         )
         self.assertEqual(out, host._final_payload)
         self.assertEqual(host.calls["_prepare_generate_music_runtime"]["seed"], 77)
-        self.assertEqual(host.calls["_run_generate_music_service_with_progress"]["guidance_scale"], 6.5)
-        self.assertEqual(host.calls["_prepare_generate_music_decode_state"]["infer_steps_for_progress"], 8)
+        self.assertEqual(host.calls["_run_generate_music_service"]["guidance_scale"], 6.5)
+        self.assertEqual(host.calls["_run_generate_music_service"]["inference_steps"], 8)
 
     def test_generate_music_returns_readiness_error_when_components_missing(self):
         """It short-circuits with readiness payload when required models are missing."""
@@ -229,11 +216,11 @@ class GenerateMusicMixinTests(unittest.TestCase):
         self.assertEqual(out, host._final_payload)
         self.assertEqual(
             "repaint",
-            host.calls["_run_generate_music_service_with_progress"]["task_type"],
+            host.calls["_run_generate_music_service"]["task_type"],
         )
         self.assertIs(
             source_latents,
-            host.calls["_run_generate_music_service_with_progress"]["source_repaint_latents"],
+            host.calls["_run_generate_music_service"]["source_repaint_latents"],
         )
 
 
@@ -369,7 +356,7 @@ class TurboGuidanceScaleTests(unittest.TestCase):
         )
         self.assertEqual(out, host._final_payload)
         self.assertEqual(
-            host.calls["_run_generate_music_service_with_progress"]["guidance_scale"],
+            host.calls["_run_generate_music_service"]["guidance_scale"],
             1.0,
         )
 
@@ -388,7 +375,7 @@ class TurboGuidanceScaleTests(unittest.TestCase):
         )
         self.assertEqual(out, host._final_payload)
         self.assertEqual(
-            host.calls["_run_generate_music_service_with_progress"]["guidance_scale"],
+            host.calls["_run_generate_music_service"]["guidance_scale"],
             7.0,
         )
 

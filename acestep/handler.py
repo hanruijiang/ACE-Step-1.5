@@ -8,7 +8,6 @@ import sys
 # Disable tokenizers parallelism to avoid fork warning
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-import threading
 from typing import Optional
 
 import torch
@@ -32,7 +31,6 @@ from acestep.core.generation.handler import (
     MemoryUtilsMixin,
     MetadataMixin,
     PaddingMixin,
-    ProgressMixin,
     PromptMixin,
     ServiceGenerateMixin,
     TaskUtilsMixin,
@@ -67,7 +65,6 @@ class AceStepHandler(
     MemoryUtilsMixin,
     MetadataMixin,
     PaddingMixin,
-    ProgressMixin,
     PromptMixin,
     ServiceGenerateMixin,
     TaskUtilsMixin,
@@ -112,16 +109,6 @@ class AceStepHandler(
         self.current_offload_cost = 0.0
         self.disable_tqdm = os.environ.get("ACESTEP_DISABLE_TQDM", "").lower() in ("1", "true", "yes") or not getattr(sys.stderr, 'isatty', lambda: False)()
         self.debug_stats = os.environ.get("ACESTEP_DEBUG_STATS", "").lower() in ("1", "true", "yes")
-        self._last_diffusion_per_step_sec: Optional[float] = None
-        self._progress_estimates_lock = threading.Lock()
-        self._progress_estimates = {"records": []}
-        self._progress_estimates_path = os.path.join(
-            self._get_project_root(),
-            ".cache",
-            "acestep",
-            "progress_estimates.json",
-        )
-        self._load_progress_estimates()
         self.last_init_params = None
         
         # Quantization state - tracks if model is quantized (int8_weight_only, fp8_weight_only, or w8a8_dynamic)

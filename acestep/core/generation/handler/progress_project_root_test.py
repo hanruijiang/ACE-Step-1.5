@@ -1,41 +1,28 @@
-"""Unit tests for ProgressMixin._get_project_root path resolution."""
+"""Unit tests for InitServiceCatalogMixin._get_project_root path resolution."""
 
 import importlib.util
 import os
-import sys
 import tempfile
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 
-def _load_progress_mixin():
-    """Load ProgressMixin directly without importing the full handler package."""
+def _load_catalog_mixin():
+    """Load InitServiceCatalogMixin directly without importing the full handler package."""
     spec = importlib.util.spec_from_file_location(
-        "progress",
-        os.path.join(os.path.dirname(__file__), "progress.py"),
+        "init_service_catalog",
+        os.path.join(os.path.dirname(__file__), "init_service_catalog.py"),
     )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.ProgressMixin
+    return mod.InitServiceCatalogMixin
 
 
-class TestProgressMixinGetProjectRoot(unittest.TestCase):
-    """Tests for ProgressMixin._get_project_root()."""
+class TestInitServiceCatalogMixinGetProjectRoot(unittest.TestCase):
+    """Tests for InitServiceCatalogMixin._get_project_root()."""
 
     def _make_host(self):
-        ProgressMixin = _load_progress_mixin()
-
-        class Host(ProgressMixin):
-            def __init__(self):
-                self._last_diffusion_per_step_sec = None
-                self._progress_estimates_lock = __import__("threading").Lock()
-                self._progress_estimates = {"records": []}
-                self._progress_estimates_path = os.path.join(
-                    tempfile.gettempdir(), "test_progress_estimates.json"
-                )
-
-        return Host()
+        return _load_catalog_mixin()()
 
     def test_returns_cwd_by_default(self):
         """_get_project_root returns the current working directory when no env var is set."""
@@ -68,7 +55,7 @@ class TestProgressMixinGetProjectRoot(unittest.TestCase):
         env = {k: v for k, v in os.environ.items() if k != "ACESTEP_PROJECT_ROOT"}
         with patch.dict(os.environ, env, clear=True):
             result = host._get_project_root()
-        # The result must equal os.getcwd(), not the directory of progress.py
+        # The result must equal os.getcwd(), not the directory of init_service_catalog.py
         progress_file_dir = os.path.dirname(os.path.abspath(__file__))
         self.assertNotEqual(result, progress_file_dir)
         self.assertEqual(result, os.getcwd())

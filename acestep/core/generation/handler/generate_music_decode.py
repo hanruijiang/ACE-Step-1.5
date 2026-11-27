@@ -17,9 +17,6 @@ class GenerateMusicDecodeMixin:
     def _prepare_generate_music_decode_state(
         self,
         outputs: Dict[str, Any],
-        infer_steps_for_progress: int,
-        actual_batch_size: int,
-        audio_duration: Optional[float],
         latent_shift: float,
         latent_rescale: float,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
@@ -27,9 +24,6 @@ class GenerateMusicDecodeMixin:
 
         Args:
             outputs: ``service_generate`` output payload containing target latents and timings.
-            infer_steps_for_progress: Effective diffusion step count for estimates.
-            actual_batch_size: Effective generation batch size.
-            audio_duration: Optional generation duration in seconds.
             latent_shift: Additive latent post-processing shift.
             latent_rescale: Multiplicative latent post-processing scale.
 
@@ -44,15 +38,6 @@ class GenerateMusicDecodeMixin:
         time_costs = outputs["time_costs"]
         time_costs["offload_time_cost"] = self.current_offload_cost
 
-        per_step = time_costs.get("diffusion_per_step_time_cost")
-        if isinstance(per_step, (int, float)) and per_step > 0:
-            self._last_diffusion_per_step_sec = float(per_step)
-            self._update_progress_estimate(
-                per_step_sec=float(per_step),
-                infer_steps=infer_steps_for_progress,
-                batch_size=actual_batch_size,
-                duration_sec=audio_duration if audio_duration and audio_duration > 0 else None,
-            )
 
         if self.debug_stats:
             logger.debug(

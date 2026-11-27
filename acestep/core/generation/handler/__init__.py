@@ -18,7 +18,6 @@ from .memory_utils import MemoryUtilsMixin
 from .metadata_utils import MetadataMixin
 from .padding_utils import PaddingMixin
 from .prompt_utils import PromptMixin
-from .progress import ProgressMixin
 from .service_generate_execute import ServiceGenerateExecuteMixin
 from .service_generate_outputs import ServiceGenerateOutputsMixin
 from .service_generate_request import ServiceGenerateRequestMixin
@@ -48,7 +47,6 @@ __all__ = [
     "MetadataMixin",
     "PaddingMixin",
     "PromptMixin",
-    "ProgressMixin",
     "ServiceGenerateExecuteMixin",
     "ServiceGenerateMixin",
     "ServiceGenerateOutputsMixin",

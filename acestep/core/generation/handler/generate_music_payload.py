@@ -49,54 +49,15 @@ class GenerateMusicPayloadMixin:
         status_message = "Generation completed successfully!"
         logger.info(f"[generate_music] Done! Generated {len(audio_tensors)} audio tensors.")
 
-        # In save-memory mode, skip storing intermediate tensors to reduce RAM
-        # usage (~4-8 GB per generation). Only non-tensor metadata is kept.
-        save_memory = get_global_gpu_config().save_memory_mode
-
-        if save_memory:
-            extra_outputs = {
-                "spans": outputs.get("spans", []),
-                "time_costs": time_costs,
-                "seed_value": seed_value_for_ui,
-                "retake_seed_value": retake_seed_value_for_ui,
-                "retake_variance": retake_variance,
-            }
-        else:
-            src_latents = outputs.get("src_latents")
-            target_latents_input = outputs.get("target_latents_input")
-            chunk_masks = outputs.get("chunk_masks")
-            spans = outputs.get("spans", [])
-            latent_masks = outputs.get("latent_masks")
-
-            encoder_hidden_states = outputs.get("encoder_hidden_states")
-            encoder_attention_mask = outputs.get("encoder_attention_mask")
-            context_latents = outputs.get("context_latents")
-            lyric_token_idss = outputs.get("lyric_token_idss")
-
-            extra_outputs = {
-                "pred_latents": pred_latents_cpu,
-                "target_latents": target_latents_input.detach().cpu() if target_latents_input is not None else None,
-                "src_latents": src_latents.detach().cpu() if src_latents is not None else None,
-                "chunk_masks": chunk_masks.detach().cpu() if chunk_masks is not None else None,
-                "latent_masks": latent_masks.detach().cpu() if latent_masks is not None else None,
-                "spans": spans,
-                "time_costs": time_costs,
-                "seed_value": seed_value_for_ui,
-                "retake_seed_value": retake_seed_value_for_ui,
-                "retake_variance": retake_variance,
-                "encoder_hidden_states": (
-                    encoder_hidden_states.detach().cpu()
-                    if encoder_hidden_states is not None
-                    else None
-                ),
-                "encoder_attention_mask": (
-                    encoder_attention_mask.detach().cpu()
-                    if encoder_attention_mask is not None
-                    else None
-                ),
-                "context_latents": context_latents.detach().cpu() if context_latents is not None else None,
-                "lyric_token_idss": lyric_token_idss.detach().cpu() if lyric_token_idss is not None else None,
-            }
+        extra_outputs = {
+            "spans": outputs.get("spans", []),
+            "time_costs": time_costs,
+            "seed_value": seed_value_for_ui,
+            "retake_seed_value": retake_seed_value_for_ui,
+            "retake_variance": retake_variance,
+        }
+        if not get_global_gpu_config().save_memory_mode:
+            extra_outputs["pred_latents"] = pred_latents_cpu
 
         audios = []
         for audio_tensor in audio_tensors:
