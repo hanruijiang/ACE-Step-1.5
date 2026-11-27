@@ -45,7 +45,6 @@ class InitServiceOrchestratorMixin:
         project_root: str,
         config_path: str,
         device: str = "auto",
-        use_flash_attention: bool = False,
         compile_model: bool = False,
         offload_to_cpu: bool = False,
         offload_dit_to_cpu: bool = False,
@@ -145,7 +144,6 @@ class InitServiceOrchestratorMixin:
             self._load_main_model_from_checkpoint(
                 model_checkpoint_path=model_path,
                 device=resolved_device,
-                use_flash_attention=use_flash_attention,
                 compile_model=normalized_compile,
                 quantization=self.quantization,
             )
@@ -178,7 +176,6 @@ class InitServiceOrchestratorMixin:
                 "checkpoint_dir": checkpoint_dir,
                 "config_path": config_path,
                 "device": resolved_device,
-                "use_flash_attention": use_flash_attention,
                 "compile_model": normalized_compile,
                 "offload_to_cpu": offload_to_cpu,
                 "offload_dit_to_cpu": offload_dit_to_cpu,

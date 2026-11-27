@@ -23,17 +23,14 @@ from transformers.generation.logits_process import (
 )
 from acestep.constrained_logits_processor import MetadataConstrainedLogitsProcessor
 from acestep.constants import DEFAULT_LM_INSTRUCTION, DEFAULT_LM_INSPIRED_INSTRUCTION, DEFAULT_LM_REWRITE_INSTRUCTION, DURATION_MIN, DURATION_MAX
-from acestep.gpu_config import get_global_gpu_config
+from acestep.gpu_config import get_global_gpu_config, is_rocm_available, cuda_supports_bfloat16
 
 class LLMHandler:
     """5Hz LM Handler for audio code generation"""
 
     STOP_REASONING_TAG = "</think>"
 
-    # HuggingFace Space environment detection
-    IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
-
-    def __init__(self, persistent_storage_path: Optional[str] = None):
+    def __init__(self):
         """Initialize LLMHandler with default values"""
         self.llm = None
         self.llm_tokenizer = None
@@ -45,21 +42,9 @@ class LLMHandler:
         self.offload_to_cpu = False
         self.disable_tqdm = os.environ.get("ACESTEP_DISABLE_TQDM", "").lower() in ("1", "true", "yes") or not (hasattr(sys.stderr, 'isatty') and sys.stderr.isatty())
 
-        # HuggingFace Space persistent storage support
-        if persistent_storage_path is None and self.IS_HUGGINGFACE_SPACE:
-            persistent_storage_path = "/data"
-        self.persistent_storage_path = persistent_storage_path
-
         # Shared constrained decoding processor
         self.constrained_processor: Optional[MetadataConstrainedLogitsProcessor] = None
 
-        self._last_initialize_config = None
-
-        # A/B toggle: when True, use the pre-fix prompt format for CFG uncond
-        # (keeps caption+lyrics in uncond, closes the assistant turn with <|im_end|>
-        # before codes). Intended for manual comparison against the training-aligned
-        # format only.
-        self.use_legacy_cfg_prompt = False
 
     def _clear_accelerator_cache(self) -> None:
         """Release freed accelerator memory back to the driver.
@@ -122,8 +107,6 @@ class LLMHandler:
         """Get checkpoint directory via the shared resolver."""
         if getattr(self, "checkpoint_dir", None):
             return str(self.checkpoint_dir)
-        if self.persistent_storage_path:
-            return os.path.join(self.persistent_storage_path, "checkpoints")
         from acestep.model_downloader import get_checkpoints_dir
         return str(get_checkpoints_dir())
 
@@ -417,7 +400,7 @@ class LLMHandler:
         Args:
             checkpoint_dir: Checkpoint directory path
             lm_model_path: LM model path (relative to checkpoint_dir)
-            backend: Compatibility argument; only PyTorch ("pt") is supported.
+            backend: PyTorch ("pt").
             device: Device type ("auto", "cuda", "mps", "xpu", or "cpu")
             offload_to_cpu: Whether to offload to CPU
             dtype: Data type (if None, auto-detect based on device)
@@ -477,7 +460,9 @@ class LLMHandler:
             # produce NaN/inf when naively converted to float16 (different exponent range).
             # The DiT and VAE use float16 on MPS where it actually helps throughput.
             if dtype is None:
-                if device in ["cuda", "xpu"]:
+                if device == "cuda":
+                    self.dtype = torch.float32 if is_rocm_available() or not cuda_supports_bfloat16() else torch.bfloat16
+                elif device == "xpu":
                     self.dtype = torch.bfloat16
                 else:
                     self.dtype = torch.float32
@@ -501,14 +486,6 @@ class LLMHandler:
             full_lm_model_path = os.path.join(checkpoint_dir, lm_model_path)
             if not os.path.exists(full_lm_model_path):
                 return f"❌ 5Hz LM model not found at {full_lm_model_path}", False
-            self._last_initialize_config = {
-                "checkpoint_dir": checkpoint_dir,
-                "lm_model_path": lm_model_path,
-                "backend": backend,
-                "device": device,
-                "offload_to_cpu": offload_to_cpu,
-                "dtype": self.dtype,
-            }
 
             # Proactive CUDA cleanup before LM load to reduce fragmentation on mode/model switch
             if device == "cuda" and torch.cuda.is_available():
@@ -1226,7 +1203,7 @@ class LLMHandler:
                     prompt = f"# Lyric\n{lyrics}\n"
             else:
                 # Codes phase: will be handled by build_formatted_prompt_with_cot
-                # For backward compatibility, use simple caption as before
+                # Use the caption as the prompt.
                 prompt = caption
         else:
             # Conditional prompt: include both caption and lyrics
@@ -1261,35 +1238,6 @@ class LLMHandler:
         """
         if self.llm_tokenizer is None:
             raise ValueError("LLM tokenizer is not initialized. Call initialize() first.")
-
-        if self.use_legacy_cfg_prompt:
-            # Isolated-variable A/B path: uncond keeps the `# Caption\n...\n\n#
-            # Lyric\n...\n` wrapper (the pre-fix design choice, where CFG only
-            # amplifies the CoT-metadata direction because caption/lyrics are
-            # identical on both sides). Structural details (open assistant turn,
-            # `<think>\n\n</think>` for empty reasoning, `\n\n` separator before
-            # the first code) match the training-aligned path below so the only
-            # thing that differs between toggle states is the uncond user
-            # content — enabling a clean manual comparison of that single design
-            # decision.
-            if is_negative_prompt:
-                has_negative_prompt = self._has_meaningful_negative_prompt(negative_prompt)
-                cot_for_prompt = "<think>\n\n</think>"
-                caption_for_prompt = negative_prompt if has_negative_prompt else caption
-            else:
-                cot_for_prompt = cot_text
-                caption_for_prompt = caption
-            user_prompt = f"# Caption\n{caption_for_prompt}\n\n# Lyric\n{lyrics}\n"
-            formatted = self.llm_tokenizer.apply_chat_template(
-                [
-                    {"role": "system", "content": f"# Instruction\n{DEFAULT_LM_INSTRUCTION}\n\n"},
-                    {"role": "user", "content": user_prompt},
-                ],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            formatted += cot_for_prompt + "\n\n"
-            return formatted
 
         if is_negative_prompt:
             # Match training CFG-dropout format: user message is the raw negative prompt

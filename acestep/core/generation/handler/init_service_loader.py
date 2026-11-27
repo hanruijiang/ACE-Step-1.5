@@ -117,7 +117,6 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
         *,
         model_checkpoint_path: str,
         device: str,
-        use_flash_attention: bool,
         compile_model: bool,
         quantization: Optional[str],
     ) -> str:
@@ -142,10 +141,7 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
                 )
 
         if device == "cuda" and not gpu_config.cuda_supports_bfloat16():
-            # Pre-Ampere GPUs (compute capability < 8.0) run in float16 which
-            # can overflow in SDPA's fused softmax with longer sequences,
-            # producing NaN/Inf latents (see issues #924, #927).  Eager
-            # attention upcasts to float32 for softmax, avoiding the overflow.
+            # Use eager attention for FP16 numerical stability.
             logger.info(
                 "[initialize_service] Pre-Ampere CUDA detected: using eager "
                 "attention for float16 numerical stability."

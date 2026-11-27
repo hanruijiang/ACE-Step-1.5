@@ -1056,7 +1056,7 @@ def main():
         type=str,
         default=None,
         choices=["pt", "pyTorch"],
-        help="Compatibility option: PyTorch is the only inference backend."
+        help="PyTorch inference backend."
     )
     parser.add_argument(
         "--log-level",
@@ -1106,9 +1106,7 @@ def main():
         "seed": params_defaults.seed,
         "guidance_scale": params_defaults.guidance_scale,
         "use_adg": params_defaults.use_adg,
-        # dcw_enabled is left unset (None) here: core generation resolves it
-        # from the loaded model's own config.is_turbo (see #1273) unless a
-        # TOML config or the wizard explicitly overrides it. See issue #1259.
+        # DCW defaults to the loaded model's configuration.
         "dcw_enabled": None,
         "dcw_mode": params_defaults.dcw_mode,
         "dcw_scaler": params_defaults.dcw_scaler,
@@ -1184,14 +1182,10 @@ def main():
                 parser.error(f"Unknown configuration parameter: {key}")
             setattr(args, key, value)
         args.config = cli_args.config
-        # Track whether the config file itself set use_random_seed, so an
-        # explicit `seed = 42` (singular) without it can auto-disable random
-        # seeding below instead of being silently ignored (see issue #1259).
-        # Only relevant for the TOML-config path: the wizard already prompts
-        # for seed and use_random_seed together, so it can't hit this case.
+        # Explicit seeds disable random seeding unless requested otherwise.
         args._use_random_seed_explicit = "use_random_seed" in config_from_file
 
-    # Validate legacy configuration fields before entering the wizard.
+    # Validate runtime settings.
     if cli_args.backend is not None:
         args.backend = cli_args.backend
     if args.backend not in (None, "pt", "pyTorch"):
@@ -1277,10 +1271,7 @@ def main():
         and args.seed != -1
         and args.use_random_seed
     ):
-        # A TOML config gave an explicit singular `seed` without also setting
-        # use_random_seed - without this, use_random_seed's True default wins
-        # and the seed is silently ignored (see issue #1259). Mirrors the
-        # args.seeds handling above, which already does this for seed lists.
+        # Honor an explicit seed.
         args.use_random_seed = False
         print(
             f"INFO: use_random_seed not set explicitly while seed={args.seed} was provided in "
@@ -1296,7 +1287,7 @@ def main():
     if args.task_type not in TASK_TYPES:
         parser.error(f"Unsupported task_type: {args.task_type}")
     if args.prompt and not args.caption:
-        args.caption = args.prompt  # legacy TOML alias
+        args.caption = args.prompt
     if args.flow_edit_morph:
         if args.task_type not in {"text2music", "cover", "cover-nofsq"}:
             parser.error("FlowEdit is supported on text2music, cover and cover-nofsq only.")
@@ -1461,8 +1452,6 @@ def main():
     from acestep.model_downloader import get_checkpoints_dir, check_model_exists, SUBMODEL_REGISTRY, DEFAULT_LM_MODEL
     checkpoints_dir = get_checkpoints_dir(args.checkpoint_dir)
 
-    use_flash_attention = False
-
     compile_model = os.environ.get("ACESTEP_COMPILE_MODEL", "").strip().lower() in {
         "1", "true", "yes", "y", "on",
     }
@@ -1472,7 +1461,6 @@ def main():
         project_root=args.project_root,
         config_path=args.config_path,
         device=device,
-        use_flash_attention=use_flash_attention,
         compile_model=compile_model,
         offload_to_cpu=args.offload_to_cpu,
         offload_dit_to_cpu=args.offload_dit_to_cpu,
@@ -1694,13 +1682,6 @@ def main():
         if preloaded_prompt is not None and not preloaded_prompt.strip():
             preloaded_prompt = None
         _install_prompt_edit_hook(llm_handler, instruction_path, preloaded_prompt=preloaded_prompt)
-
-    # dcw_enabled is left as None here when the user hasn't set it explicitly
-    # (via TOML config or the wizard): GenerationParams.dcw_enabled=None defers
-    # to generate_music()'s own model-aware default (turbo on / non-turbo off,
-    # resolved from the loaded model's config.is_turbo - see #1273), so the CLI
-    # no longer needs to guess this itself. See issue #1259 for the original
-    # distorted-audio symptom this covers.
 
     # --- Configure Generation ---
     params = GenerationParams(

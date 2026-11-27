@@ -120,7 +120,7 @@ class InitServiceSetupMixin:
         offload_dit_to_cpu: bool,
         quantization: Optional[str],
     ) -> str:
-        """Format initialize_service status output for UI/API consumers."""
+        """Format model initialization status."""
         status_msg = f"[OK] Model initialized successfully on {device}\n"
         status_msg += f"Main model: {model_path}\n"
         status_msg += f"VAE: {vae_path}\n"

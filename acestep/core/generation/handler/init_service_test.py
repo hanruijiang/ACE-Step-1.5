@@ -386,7 +386,6 @@ class InitServiceMixinTests(unittest.TestCase):
             "checkpoint_dir",
             "config_path",
             "device",
-            "use_flash_attention",
             "compile_model",
             "offload_to_cpu",
             "offload_dit_to_cpu",
@@ -523,7 +522,6 @@ class InitServiceMixinTests(unittest.TestCase):
                 attn = host._load_main_model_from_checkpoint(
                     model_checkpoint_path=checkpoint_dir,
                     device="cpu",
-                    use_flash_attention=False,
                     compile_model=False,
                     quantization=None,
                 )

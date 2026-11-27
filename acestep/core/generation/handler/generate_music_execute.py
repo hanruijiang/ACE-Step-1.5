@@ -6,14 +6,11 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from loguru import logger
 
-# Maximum wall-clock seconds to wait for service_generate before declaring a hang.
-# Generous default: most generations finish in 30-120s, but large batches on slow
-# GPUs can take several minutes.  Override via ACESTEP_GENERATION_TIMEOUT env var.
-_DEFAULT_GENERATION_TIMEOUT = int(os.environ.get("ACESTEP_GENERATION_TIMEOUT", "600"))
+# A positive timeout is opt-in; zero runs synchronously.
 
 
 class GenerateMusicExecuteMixin:
-    """Run service generation with a timeout."""
+    """Run service generation with an optional timeout."""
 
     def _run_generate_music_service(
         self,
@@ -112,23 +109,30 @@ class GenerateMusicExecuteMixin:
             except Exception as exc:
                 _error["exc"] = exc
 
+        timeout = int(os.environ.get("ACESTEP_GENERATION_TIMEOUT", "0"))
+        if timeout <= 0:
+            _service_target()
+            if "exc" in _error:
+                raise _error["exc"]
+            return {"outputs": _result["outputs"]}
+
         gen_thread = threading.Thread(
             target=_service_target,
             name="service-generate",
             daemon=True,
         )
         gen_thread.start()
-        gen_thread.join(timeout=_DEFAULT_GENERATION_TIMEOUT)
+        gen_thread.join(timeout=timeout)
 
         if gen_thread.is_alive():
             logger.error(
-                f"[generate_music] service_generate exceeded {_DEFAULT_GENERATION_TIMEOUT}s "
+                f"[generate_music] service_generate exceeded {timeout}s "
                 f"timeout (batch={actual_batch_size}, steps={inference_steps}, "
                 f"duration={audio_duration}s).  The CUDA operation may still be "
                 f"running in the background."
             )
             raise TimeoutError(
-                f"Music generation timed out after {_DEFAULT_GENERATION_TIMEOUT} seconds.  "
+                f"Music generation timed out after {timeout} seconds.  "
                 f"This usually means the GPU ran out of VRAM or the diffusion loop "
                 f"stalled.  Try reducing batch size, duration, or inference steps."
             )
