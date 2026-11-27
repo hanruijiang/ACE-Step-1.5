@@ -804,6 +804,7 @@ class LLMHandler:
         batch_size: Optional[int] = None,
         seeds: Optional[List[int]] = None,
         progress=None,
+        prompt_editor=None,
     ) -> Dict[str, Any]:
         """Two-phase LM generation: CoT generation followed by audio codes generation.
 
@@ -819,8 +820,8 @@ class LLMHandler:
             use_cot_language: Whether to generate language in CoT (default True).
             batch_size: Optional batch size for batch generation. If None or 1, returns single result.
                        If > 1, returns batch results (lists).
-            seeds: Optional list of seeds for batch generation (for reproducibility).
-                  Only used when batch_size > 1. TODO: not used yet
+            seeds: Per-item generation seeds.
+            prompt_editor: Optional callback returning an edited prompt and its metadata.
 
         Returns:
             Dictionary containing:
@@ -994,6 +995,15 @@ class LLMHandler:
 
         # Build formatted prompt with CoT for codes generation phase
         formatted_prompt_with_cot = self.build_formatted_prompt_with_cot(caption, lyrics, cot_text)
+        prompt_edits = {}
+        if prompt_editor is not None:
+            formatted_prompt_with_cot, prompt_edits = prompt_editor(formatted_prompt_with_cot)
+            metadata.update(prompt_edits["metadata"])
+            caption = prompt_edits.get("caption", caption)
+            lyrics = prompt_edits.get("lyrics", lyrics)
+            edited_duration = prompt_edits["metadata"].get("duration")
+            if edited_duration is not None:
+                target_duration = float(edited_duration)
         logger.info(f"generate_with_stop_condition: formatted_prompt_with_cot={formatted_prompt_with_cot}")
 
         progress(0.5, f"Phase 2: Generating audio codes for {actual_batch_size} items...")
@@ -1065,6 +1075,7 @@ class LLMHandler:
                         "phase2_time": phase2_time,
                         "total_time": total_time,
                     },
+                    "prompt_edits": prompt_edits,
                     "codes_counts": codes_counts,
                     "total_codes": sum(codes_counts),
                 },
@@ -1132,6 +1143,7 @@ class LLMHandler:
                         "phase2_time": phase2_time,
                         "total_time": total_time,
                     },
+                    "prompt_edits": prompt_edits,
                     "codes_count": codes_count,
                 },
             }
@@ -2048,7 +2060,6 @@ class LLMHandler:
         # Extract metadata from reasoning section
         # Try different reasoning tag patterns
         reasoning_patterns = [
-            r'<think>(.*?)</think>',
             r'<think>(.*?)</think>',
             r'<reasoning>(.*?)</reasoning>',
         ]

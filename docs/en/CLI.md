@@ -84,6 +84,6 @@ Advanced TOML options include `repaint_mode`, `repaint_strength`, `retake_seed`,
 
 When `thinking=True` and a config file is loaded via `--config`, the CLI looks for an `instruction.txt` file in the project root. If found, its contents are used as the pre-loaded formatted prompt for LM audio-token generation, bypassing the interactive editing step.
 
-When running without a config file (wizard mode), the CLI writes the LM's formatted prompt to `instruction.txt` and pauses so you can edit it before audio-token generation proceeds.
+When running without a config file (wizard mode), the CLI writes the LM's formatted prompt to `instruction.txt` and pauses so you can edit it before audio-token generation proceeds. The edited prompt applies to every output in the batch. Config-driven generation without `instruction.txt` runs without a prompt-editing pause.
 
 This allows fine-tuning the exact prompt (caption, lyrics, metadata) that the LM sees before generating audio codes.

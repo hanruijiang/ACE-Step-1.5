@@ -335,77 +335,48 @@ def _parse_timesteps_input(value) -> Optional[List[float]]:
         return None
 
 
-def _install_prompt_edit_hook(
-    llm_handler: LLMHandler,
-    instruction_path: str,
-    preloaded_prompt: Optional[str] = None,
-) -> None:
-    """Intercept formatted prompt generation to allow user editing before audio tokens."""
-    original = llm_handler.build_formatted_prompt_with_cot
-    cache = {}
+def _make_prompt_editor(instruction_path: str, preloaded_prompt: Optional[str] = None):
+    """Edit one audio-token prompt and reuse it for the generation batch."""
+    cached = None
 
-    def wrapped(caption, lyrics, cot_text, is_negative_prompt=False, negative_prompt="NO USER INPUT"):
-        prompt = original(
-            caption,
-            lyrics,
-            cot_text,
-            is_negative_prompt=is_negative_prompt,
-            negative_prompt=negative_prompt,
+    def edit(prompt):
+        nonlocal cached
+        if cached is not None:
+            return cached
+
+        edited = preloaded_prompt if preloaded_prompt is not None else _edit_formatted_prompt_via_file(
+            prompt, instruction_path
         )
-        if is_negative_prompt:
-            conditional_prompt = original(
-                caption,
-                lyrics,
-                cot_text,
-                is_negative_prompt=False,
-                negative_prompt=negative_prompt,
-            )
-            cached = cache.get(conditional_prompt)
-            if cached and (cached.get("edited_caption") or cached.get("edited_lyrics")):
-                edited_caption = cached.get("edited_caption") or caption
-                edited_lyrics = cached.get("edited_lyrics") or lyrics
-                return original(
-                    edited_caption,
-                    edited_lyrics,
-                    cot_text,
-                    is_negative_prompt=True,
-                    negative_prompt=negative_prompt,
-                )
-            return prompt
-        cached = cache.get(prompt)
-        if cached:
-            return cached["edited_prompt"]
-        if getattr(llm_handler, "_skip_prompt_edit", False):
-            cache[prompt] = {
-                "edited_prompt": prompt,
-                "edited_caption": None,
-                "edited_lyrics": None,
-            }
-            return prompt
-        if preloaded_prompt is not None:
-            edited = preloaded_prompt
-        else:
-            edited = _edit_formatted_prompt_via_file(prompt, instruction_path)
-        edited_caption, edited_lyrics = _extract_caption_lyrics_from_formatted_prompt(edited)
-        if edited != prompt:
-            print("INFO: Using edited draft for audio-token prompt.")
-            if edited_caption or edited_lyrics:
-                llm_handler._edited_caption = edited_caption
-                llm_handler._edited_lyrics = edited_lyrics
-            edited_instruction = _extract_instruction_from_formatted_prompt(edited)
-            if edited_instruction:
-                llm_handler._edited_instruction = edited_instruction
-            edited_metas = _extract_cot_metadata_from_formatted_prompt(edited)
-            if edited_metas:
-                llm_handler._edited_metas = edited_metas
-        cache[prompt] = {
-            "edited_prompt": edited,
-            "edited_caption": edited_caption,
-            "edited_lyrics": edited_lyrics,
+        metadata = _extract_cot_metadata_from_formatted_prompt(edited)
+        for key in ("bpm", "duration"):
+            if key in metadata:
+                value = _parse_number(metadata[key])
+                if value is None or value <= 0:
+                    metadata.pop(key)
+                else:
+                    metadata[key] = int(value) if key == "bpm" else value
+        original_metadata = _extract_cot_metadata_from_formatted_prompt(prompt)
+        overrides = {
+            key: value for key, value in metadata.items()
+            if str(value) != original_metadata.get(key)
+            and not (key in ("bpm", "duration") and value == _parse_number(original_metadata.get(key, "")))
         }
-        return edited
+        edits = {"metadata": metadata, "overrides": overrides}
+        if edited != prompt:
+            print("Using edited audio-token prompt.")
+            caption, lyrics = _extract_caption_lyrics_from_formatted_prompt(edited)
+            original_caption, original_lyrics = _extract_caption_lyrics_from_formatted_prompt(prompt)
+            if caption is not None and caption != original_caption:
+                edits["caption"] = caption
+            if lyrics is not None and lyrics != original_lyrics:
+                edits["lyrics"] = lyrics
+            instruction = _extract_instruction_from_formatted_prompt(edited)
+            if instruction and instruction != _extract_instruction_from_formatted_prompt(prompt):
+                edits["instruction"] = instruction
+        cached = (edited, edits)
+        return cached
 
-    llm_handler.build_formatted_prompt_with_cot = wrapped
+    return edit
 
 
 def _prompt_int(prompt: str, default: Optional[int] = None, min_value: Optional[int] = None,
@@ -1638,28 +1609,18 @@ def main():
     if args.sample_mode or format_has_duration:
         args.use_cot_metas = False
 
-    # --- Prompt Editing Hook for LLM Audio Tokens ---
+    # Optional audio-token prompt editing.
+    prompt_editor = None
     if args.thinking and args.task_type not in skip_lm_tasks and not args.flow_edit_morph:
-        instruction_path = os.path.join(
-            os.path.abspath(args.project_root) if args.project_root else os.getcwd(),
-            "instruction.txt",
-        )
-        preloaded_prompt = None
-        use_instruction_file = False
-        if args.config and os.path.exists(instruction_path):
-            use_instruction_file = True
-            try:
+        instruction_path = os.path.join(args.project_root, "instruction.txt")
+        if args.config:
+            if os.path.isfile(instruction_path):
                 with open(instruction_path, "r", encoding="utf-8") as f:
                     preloaded_prompt = f.read()
-            except Exception as e:
-                print(f"WARNING: Failed to read {instruction_path}: {e}")
-                preloaded_prompt = None
-                use_instruction_file = False
-        if use_instruction_file:
-            print(f"INFO: Found {instruction_path}. Using it without editing.")
-        if preloaded_prompt is not None and not preloaded_prompt.strip():
-            preloaded_prompt = None
-        _install_prompt_edit_hook(llm_handler, instruction_path, preloaded_prompt=preloaded_prompt)
+                if preloaded_prompt.strip():
+                    prompt_editor = _make_prompt_editor(instruction_path, preloaded_prompt)
+        else:
+            prompt_editor = _make_prompt_editor(instruction_path)
 
     # --- Configure Generation ---
     params = GenerationParams(
@@ -1762,284 +1723,12 @@ def main():
         print(f"Custom Seeds: {config.seeds}")
     print("---------------------------\n")
 
-    manual_edit_pipeline = (
-        args.thinking
-        and args.task_type not in skip_lm_tasks
-        and not params.flow_edit_morph
-        and not (params.audio_codes and str(params.audio_codes).strip())
+    if log_level_upper in {"INFO", "DEBUG"}:
+        _print_dit_prompt(dit_handler, params)
+    result = generate_music(
+        dit_handler, llm_handler, params, config,
+        save_dir=args.save_dir, prompt_editor=prompt_editor,
     )
-
-    lm_time_costs = None
-    if manual_edit_pipeline:
-        top_k_value = None if not params.lm_top_k or params.lm_top_k == 0 else int(params.lm_top_k)
-        top_p_value = None if not params.lm_top_p or params.lm_top_p >= 1.0 else params.lm_top_p
-
-        actual_batch_size = config.batch_size if config.batch_size is not None else 1
-        seed_for_generation = ""
-        if config.seeds is not None:
-            if isinstance(config.seeds, list) and len(config.seeds) > 0:
-                seed_for_generation = ",".join(str(s) for s in config.seeds)
-            elif isinstance(config.seeds, int):
-                seed_for_generation = str(config.seeds)
-        elif params.seed is not None and params.seed != -1:
-            seed_for_generation = str(params.seed)
-        actual_seed_list, _ = dit_handler.prepare_seeds(actual_batch_size, seed_for_generation, config.use_random_seed)
-        config.seeds = actual_seed_list
-        config.use_random_seed = False
-
-        original_target_duration = params.duration
-        original_bpm = params.bpm
-        original_keyscale = params.keyscale
-        original_timesignature = params.timesignature
-        original_vocal_language = params.vocal_language
-        lm_result = None
-        lm_metadata = {}
-        edited_caption = None
-        edited_lyrics = None
-        edited_instruction = None
-        edited_metas = {}
-        lm_time_costs = {
-            "phase1_time": 0.0,
-            "phase2_time": 0.0,
-            "total_time": 0.0,
-        }
-        for attempt in range(2):
-            user_metadata = {}
-            if params.bpm is not None:
-                try:
-                    bpm_value = float(params.bpm)
-                    if bpm_value > 0:
-                        user_metadata["bpm"] = int(bpm_value)
-                except (ValueError, TypeError):
-                    pass
-            if params.keyscale and params.keyscale.strip() and params.keyscale.strip().lower() not in ["n/a", ""]:
-                user_metadata["keyscale"] = params.keyscale.strip()
-            if params.timesignature and params.timesignature.strip() and params.timesignature.strip().lower() not in ["n/a", ""]:
-                user_metadata["timesignature"] = params.timesignature.strip()
-            if params.duration is not None:
-                try:
-                    duration_value = float(params.duration)
-                    if duration_value > 0:
-                        user_metadata["duration"] = int(duration_value)
-                except (ValueError, TypeError):
-                    pass
-            # Only include caption and language in user_metadata on
-            # regeneration attempts.  On the first attempt the LM should
-            # generate/expand these via CoT (matching inference.py behaviour).
-            if attempt > 0:
-                if params.caption and params.caption.strip():
-                    user_metadata["caption"] = params.caption.strip()
-                if params.vocal_language and params.vocal_language not in ("", "unknown"):
-                    user_metadata["language"] = params.vocal_language
-            user_metadata_to_pass = user_metadata if user_metadata else None
-
-            lm_result = llm_handler.generate_with_stop_condition(
-                caption=params.caption or "",
-                lyrics=params.lyrics or "",
-                infer_type="llm_dit",
-                temperature=params.lm_temperature,
-                cfg_scale=params.lm_cfg_scale,
-                negative_prompt=params.lm_negative_prompt,
-                top_k=top_k_value,
-                top_p=top_p_value,
-                target_duration=params.duration,
-                user_metadata=user_metadata_to_pass,
-                use_cot_caption=params.use_cot_caption,
-                use_cot_language=params.use_cot_language,
-                use_cot_metas=params.use_cot_metas,
-                use_constrained_decoding=params.use_constrained_decoding,
-                constrained_decoding_debug=config.constrained_decoding_debug,
-                batch_size=actual_batch_size,
-                seeds=actual_seed_list,
-            )
-            lm_extra_time = (lm_result.get("extra_outputs") or {}).get("time_costs", {})
-            if lm_extra_time:
-                lm_time_costs["phase1_time"] += float(lm_extra_time.get("phase1_time", 0.0) or 0.0)
-                lm_time_costs["phase2_time"] += float(lm_extra_time.get("phase2_time", 0.0) or 0.0)
-                lm_time_costs["total_time"] += float(
-                    lm_extra_time.get(
-                        "total_time",
-                        (lm_extra_time.get("phase1_time", 0.0) or 0.0)
-                        + (lm_extra_time.get("phase2_time", 0.0) or 0.0),
-                    )
-                    or 0.0
-                )
-
-            if not lm_result.get("success", False):
-                error_msg = lm_result.get("error", "Unknown LM error")
-                print(f"Generation failed: {error_msg}", file=sys.stderr)
-                sys.exit(1)
-
-            if actual_batch_size > 1:
-                lm_metadata = (lm_result.get("metadata") or [{}])[0]
-                audio_codes = lm_result.get("audio_codes", [])
-            else:
-                lm_metadata = lm_result.get("metadata", {}) or {}
-                audio_codes = lm_result.get("audio_codes", "")
-
-            if audio_codes:
-                params.audio_codes = audio_codes
-            else:
-                print("WARNING: LM did not return audio codes; proceeding without codes.")
-
-            edited_caption = getattr(llm_handler, "_edited_caption", None)
-            edited_lyrics = getattr(llm_handler, "_edited_lyrics", None)
-            edited_instruction = getattr(llm_handler, "_edited_instruction", None)
-            edited_metas = getattr(llm_handler, "_edited_metas", {})
-
-            parsed_duration = None
-            parsed_bpm = None
-            parsed_keyscale = None
-            parsed_timesignature = None
-            parsed_language = None
-            if edited_metas:
-                bpm_value = edited_metas.get("bpm")
-                if bpm_value:
-                    parsed = _parse_number(bpm_value)
-                    if parsed is not None and parsed > 0:
-                        parsed_bpm = int(parsed)
-                duration_value = edited_metas.get("duration")
-                if duration_value:
-                    parsed = _parse_number(duration_value)
-                    if parsed is not None and parsed > 0:
-                        parsed_duration = float(parsed)
-                keyscale_value = edited_metas.get("keyscale")
-                if keyscale_value:
-                    parsed_keyscale = keyscale_value
-                timesignature_value = edited_metas.get("timesignature")
-                if timesignature_value:
-                    parsed_timesignature = timesignature_value
-                language_value = edited_metas.get("language") or edited_metas.get("vocal_language")
-                if language_value:
-                    parsed_language = language_value
-
-            if attempt == 0:
-                duration_changed = parsed_duration is not None and (
-                    original_target_duration is None
-                    or float(original_target_duration) <= 0
-                    or abs(float(original_target_duration) - parsed_duration) > 1e-6
-                )
-                bpm_changed = parsed_bpm is not None and parsed_bpm != original_bpm
-                keyscale_changed = parsed_keyscale is not None and parsed_keyscale != original_keyscale
-                timesignature_changed = parsed_timesignature is not None and parsed_timesignature != original_timesignature
-                language_changed = parsed_language is not None and parsed_language != original_vocal_language
-                if duration_changed or bpm_changed or keyscale_changed or timesignature_changed or language_changed:
-                    if duration_changed:
-                        params.duration = parsed_duration
-                    if bpm_changed:
-                        params.bpm = parsed_bpm
-                    if keyscale_changed:
-                        params.keyscale = parsed_keyscale
-                    if timesignature_changed:
-                        params.timesignature = parsed_timesignature
-                    if language_changed:
-                        params.vocal_language = parsed_language
-                    # Carry forward the expanded caption so the second
-                    # attempt's <think> block (and user_metadata) use it
-                    # instead of the short original caption.
-                    edited_caption_for_regen = edited_metas.get("caption") if edited_metas else None
-                    if edited_caption_for_regen and edited_caption_for_regen.strip():
-                        params.caption = edited_caption_for_regen
-                    print("INFO: Edited metadata detected. Regenerating audio codes with updated values.")
-                    llm_handler._skip_prompt_edit = True
-                    continue
-            break
-
-        edited_meta_caption = edited_metas.get("caption") if edited_metas else None
-        if edited_meta_caption and edited_meta_caption.strip():
-            params.caption = edited_meta_caption
-        elif edited_caption:
-            params.caption = edited_caption
-        elif params.use_cot_caption and lm_metadata.get("caption"):
-            params.caption = lm_metadata.get("caption")
-
-        if edited_lyrics:
-            params.lyrics = edited_lyrics
-        elif not params.lyrics and lm_metadata.get("lyrics"):
-            params.lyrics = lm_metadata.get("lyrics")
-
-        if edited_instruction:
-            params.instruction = edited_instruction
-
-        if edited_metas:
-            bpm_value = edited_metas.get("bpm")
-            if bpm_value:
-                parsed = _parse_number(bpm_value)
-                if parsed is not None:
-                    params.bpm = int(parsed)
-            duration_value = edited_metas.get("duration")
-            if duration_value:
-                parsed = _parse_number(duration_value)
-                if parsed is not None:
-                    params.duration = float(parsed)
-            keyscale_value = edited_metas.get("keyscale")
-            if keyscale_value:
-                params.keyscale = keyscale_value
-            timesignature_value = edited_metas.get("timesignature")
-            if timesignature_value:
-                params.timesignature = timesignature_value
-            language_value = edited_metas.get("language") or edited_metas.get("vocal_language")
-            if language_value:
-                params.vocal_language = language_value
-        else:
-            if params.bpm is None and lm_metadata.get("bpm") not in (None, "N/A", ""):
-                parsed = _parse_number(str(lm_metadata.get("bpm")))
-                if parsed is not None:
-                    params.bpm = int(parsed)
-            if not params.keyscale and lm_metadata.get("keyscale"):
-                params.keyscale = lm_metadata.get("keyscale")
-            if not params.timesignature and lm_metadata.get("timesignature"):
-                params.timesignature = lm_metadata.get("timesignature")
-            if params.duration is None and lm_metadata.get("duration") not in (None, "N/A", ""):
-                parsed = _parse_number(str(lm_metadata.get("duration")))
-                if parsed is not None:
-                    params.duration = float(parsed)
-            if params.vocal_language in (None, "", "unknown"):
-                language_value = lm_metadata.get("vocal_language") or lm_metadata.get("language")
-                if language_value:
-                    params.vocal_language = language_value
-
-        # use_cot_language: override vocal_language with LM detection unless
-        # the user explicitly edited the language in the think block.
-        if params.use_cot_language:
-            edited_lang = (edited_metas.get("language") or edited_metas.get("vocal_language")) if edited_metas else None
-            if not edited_lang:
-                lm_lang = lm_metadata.get("vocal_language") or lm_metadata.get("language")
-                if lm_lang:
-                    params.vocal_language = lm_lang
-
-        # Populate cot_* fields for downstream reporting (mirrors inference.py)
-        if lm_metadata:
-            if original_bpm is None:
-                params.cot_bpm = params.bpm
-            if not original_keyscale:
-                params.cot_keyscale = params.keyscale
-            if not original_timesignature:
-                params.cot_timesignature = params.timesignature
-            if original_target_duration is None or float(original_target_duration) <= 0:
-                params.cot_duration = params.duration
-            if original_vocal_language in (None, "", "unknown"):
-                params.cot_vocal_language = params.vocal_language
-            if not params.caption:
-                params.cot_caption = lm_metadata.get("caption", "")
-            if not params.lyrics:
-                params.cot_lyrics = lm_metadata.get("lyrics", "")
-
-        params.thinking = False
-        params.use_cot_caption = False
-        params.use_cot_language = False
-        params.use_cot_metas = False
-        if hasattr(llm_handler, "_skip_prompt_edit"):
-            llm_handler._skip_prompt_edit = False
-
-        if log_level_upper in {"INFO", "DEBUG"}:
-            _print_dit_prompt(dit_handler, params)
-        print("Running DiT generation with edited prompt and cached audio codes...")
-        result = generate_music(dit_handler, llm_handler, params, config, save_dir=args.save_dir)
-    else:
-        if log_level_upper in {"INFO", "DEBUG"}:
-            _print_dit_prompt(dit_handler, params)
-        result = generate_music(dit_handler, llm_handler, params, config, save_dir=args.save_dir)
 
     # --- Process Results ---
     if result.success:
@@ -2048,16 +1737,6 @@ def main():
             print(f"  [{i+1}] Path: {audio['path']} | Seed: {audio['params']['seed']}")
         
         time_costs = result.extra_outputs.get("time_costs", {})
-        if manual_edit_pipeline and lm_time_costs and time_costs is not None:
-            if not isinstance(time_costs, dict):
-                time_costs = {}
-                result.extra_outputs["time_costs"] = time_costs
-            if lm_time_costs["total_time"] > 0.0:
-                time_costs["lm_phase1_time"] = lm_time_costs["phase1_time"]
-                time_costs["lm_phase2_time"] = lm_time_costs["phase2_time"]
-                time_costs["lm_total_time"] = lm_time_costs["total_time"]
-                dit_total = float(time_costs.get("dit_total_time_cost", 0.0) or 0.0)
-                time_costs["pipeline_total_time"] = time_costs["lm_total_time"] + dit_total
         if time_costs:
             print("\n--- Performance ---")
             total_time = time_costs.get('pipeline_total_time', 0)

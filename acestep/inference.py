@@ -436,6 +436,7 @@ def generate_music(
     config: GenerationConfig,
     save_dir: Optional[str] = None,
     progress=None,
+    prompt_editor=None,
 ) -> GenerationResult:
     """Generate music using ACE-Step model with optional LM reasoning.
     
@@ -584,6 +585,7 @@ def generate_music(
 
             all_metadata_list = []
             all_audio_codes_list = []
+            prompt_edits = {}
 
             for chunk_idx in range(num_chunks):
                 chunk_start = chunk_idx * max_inference_batch_size
@@ -610,12 +612,13 @@ def generate_music(
                     user_metadata=user_metadata_to_pass,
                     use_cot_caption=params.use_cot_caption,
                     use_cot_language=params.use_cot_language,
-                    use_cot_metas=params.use_cot_metas,
+                    use_cot_metas=params.use_cot_metas and not (prompt_edits and chunk_idx > 0),
                     use_constrained_decoding=params.use_constrained_decoding,
                     constrained_decoding_debug=config.constrained_decoding_debug,
                     batch_size=chunk_size,
                     seeds=chunk_seeds,
                     progress=progress,
+                    **({"prompt_editor": prompt_editor} if prompt_editor else {}),
                 )
 
                 # Check if LM generation failed
@@ -645,6 +648,9 @@ def generate_music(
 
                 # Collect time costs from LM extra_outputs
                 lm_extra = result.get("extra_outputs", {})
+                if lm_extra.get("prompt_edits"):
+                    prompt_edits = lm_extra["prompt_edits"]
+                    user_metadata_to_pass = prompt_edits["metadata"]
                 lm_chunk_time_costs = lm_extra.get("time_costs", {})
                 if lm_chunk_time_costs:
                     # Accumulate time costs from all chunks
@@ -695,13 +701,38 @@ def generate_music(
                 if not params.lyrics:
                     params.cot_lyrics = lyrics
 
-            # set cot caption and language if needed
-            if params.use_cot_caption:
-                dit_input_caption = lm_generated_metadata.get("caption", dit_input_caption)
-            if params.use_cot_language:
-                dit_input_vocal_language = lm_generated_metadata.get("vocal_language", dit_input_vocal_language)
+            if lm_generated_metadata:
+                if params.use_cot_caption:
+                    dit_input_caption = lm_generated_metadata.get("caption", dit_input_caption)
+                if params.use_cot_language:
+                    dit_input_vocal_language = lm_generated_metadata.get(
+                        "language", lm_generated_metadata.get("vocal_language", dit_input_vocal_language)
+                    )
+                if not dit_input_lyrics:
+                    dit_input_lyrics = lm_generated_metadata.get("lyrics", dit_input_lyrics)
 
-        # Direct-conditioning tasks: no LM run, so conditioning must come from params (caption + lyrics from GUI).
+            # Explicit prompt edits take precedence over input metadata.
+            overrides = prompt_edits.get("overrides", {})
+            bpm = overrides.get("bpm", bpm)
+            key_scale = overrides.get("keyscale", key_scale)
+            time_signature = overrides.get("timesignature", time_signature)
+            audio_duration = overrides.get("duration", audio_duration)
+            dit_input_caption = overrides.get("caption", prompt_edits.get("caption", dit_input_caption))
+            dit_input_vocal_language = overrides.get(
+                "language", overrides.get("vocal_language", dit_input_vocal_language)
+            )
+            dit_input_lyrics = prompt_edits.get("lyrics", dit_input_lyrics)
+            params.instruction = prompt_edits.get("instruction", params.instruction)
+
+            params.bpm = bpm
+            params.keyscale = key_scale
+            params.timesignature = time_signature
+            params.duration = audio_duration
+            params.caption = dit_input_caption
+            params.vocal_language = dit_input_vocal_language
+            params.lyrics = dit_input_lyrics
+
+        # Direct-conditioning tasks use the supplied caption and lyrics.
         if params.task_type in DIRECT_CONDITIONING_TASKS:
             dit_input_caption = params.caption or dit_input_caption
             dit_input_lyrics = params.lyrics if params.lyrics is not None else dit_input_lyrics
