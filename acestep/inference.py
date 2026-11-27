@@ -1,9 +1,7 @@
 """
-ACE-Step Inference API Module
+ACE-Step inference runtime.
 
-This module provides a standardized inference interface for music generation,
-designed for third-party integration. It offers both a simplified API and
-backward-compatible Gradio UI support.
+Shared music generation and audio editing functions used by the CLI.
 """
 
 import inspect
@@ -21,8 +19,6 @@ import torch
 
 from acestep.audio_utils import AudioSaver, apply_fade, generate_uuid_from_params, normalize_audio, get_lora_weights_hash
 from acestep.constants import BPM_MIN, BPM_MAX, DURATION_MAX, TASK_TYPES, VALID_TIME_SIGNATURES
-
-# HuggingFace Space environment detection
 
 # Task types conditioned directly on reference/source audio rather than on
 # LM-generated audio codes.  Two decisions must stay in lockstep for these:
@@ -428,7 +424,7 @@ def _resample_matching_source_seeds(
 def _load_cached_repaint_source(src_audio: Optional[str]) -> Optional[CachedRepaintSource]:
     """Load cached repaint source state from a generated audio sidecar.
 
-    The cache is an optimization for ACE-generated Gradio outputs. Missing or
+    The cache is an optimization for ACE-generated CLI outputs. Missing or
     malformed sidecars return ``None`` so uploaded audio keeps the normal
     repaint path.
     """

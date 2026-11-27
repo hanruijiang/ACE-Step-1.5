@@ -4,11 +4,9 @@ Covers:
   - Fix 1: CoT-generated duration feeds into Phase 2 target_duration.
   - Fix 2: _compute_max_new_tokens caps fallback at DURATION_MAX.
   - Fix 3: silence_latent tiling when length exceeds stored tensor.
-  - Fix 4: API-level auto-duration sentinel passes through for LM auto-calculation.
 """
 
 import unittest
-from types import SimpleNamespace
 
 try:
     import torch
@@ -17,10 +15,6 @@ try:
     from acestep.core.generation.handler.conditioning_target import (
         ConditioningTargetMixin,
     )
-    from acestep.api.job_generation_setup import (
-        _AUTO_DURATION_SENTINEL,
-        build_generation_setup,
-    )
 
     _IMPORT_ERROR = None
 except ImportError as exc:  # pragma: no cover
@@ -28,8 +22,6 @@ except ImportError as exc:  # pragma: no cover
     LLMHandler = None
     ConditioningTargetMixin = None
     DURATION_MAX = None
-    _AUTO_DURATION_SENTINEL = None
-    build_generation_setup = None
     _IMPORT_ERROR = exc
 
 
@@ -117,153 +109,10 @@ class SilenceLatentTilingTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Fix 4: API auto-duration sentinel (issue #1022)
-# ---------------------------------------------------------------------------
-
-@unittest.skipIf(build_generation_setup is None, f"import unavailable: {_IMPORT_ERROR}")
-class ApiAutoDurationTests(unittest.TestCase):
-    """build_generation_setup must pass auto-sentinel for LM auto-calculation."""
-
-    def _base_req(self):
-        return SimpleNamespace(
-            task_type="text2music",
-            instruction="default instruction",
-            reference_audio_path="",
-            src_audio_path="",
-            vocal_language="en",
-            inference_steps=25,
-            seed=None,
-            guidance_scale=4.5,
-            use_adg=False,
-            cfg_interval_start=0.0,
-            cfg_interval_end=1.0,
-            shift=1.0,
-            infer_method="ode",
-            timesteps="",
-            repainting_start=0.0,
-            repainting_end=-1,
-            audio_cover_strength=0.0,
-            cover_noise_strength=0.0,
-            audio_code_string="",
-            lm_temperature=0.85,
-            lm_cfg_scale=2.5,
-            lm_negative_prompt="",
-            batch_size=None,
-            allow_lm_batch=False,
-            use_random_seed=True,
-            audio_format="wav",
-            constrained_decoding_debug=False,
-            track_classes=None,
-            track_name="",
-            dcw_enabled=None,
-            dcw_mode="double",
-            dcw_scaler=0.05,
-            dcw_high_scaler=0.02,
-            dcw_wavelet="haar",
-        )
-
-    def test_null_duration_gets_auto_sentinel(self):
-        """When audio_duration is None, params.duration should be the auto-sentinel (-1)."""
-        setup = build_generation_setup(
-            req=self._base_req(),
-            caption="cap",
-            lyrics="lyr",
-            bpm=None,
-            key_scale="",
-            time_signature="",
-            audio_duration=None,
-            thinking=False,
-            sample_mode=False,
-            format_has_duration=False,
-            use_cot_caption=False,
-            use_cot_language=False,
-            lm_top_k=0,
-            lm_top_p=0.9,
-            parse_timesteps=lambda _: None,
-            is_instrumental=lambda _: False,
-            default_dit_instruction="default instruction",
-            task_instructions={},
-        )
-        self.assertEqual(setup.params.duration, _AUTO_DURATION_SENTINEL)
-
-    def test_zero_duration_gets_auto_sentinel(self):
-        """Zero duration should get the auto-sentinel for LM auto-calculation."""
-        setup = build_generation_setup(
-            req=self._base_req(),
-            caption="cap",
-            lyrics="lyr",
-            bpm=None,
-            key_scale="",
-            time_signature="",
-            audio_duration=0,
-            thinking=False,
-            sample_mode=False,
-            format_has_duration=False,
-            use_cot_caption=False,
-            use_cot_language=False,
-            lm_top_k=0,
-            lm_top_p=0.9,
-            parse_timesteps=lambda _: None,
-            is_instrumental=lambda _: False,
-            default_dit_instruction="default instruction",
-            task_instructions={},
-        )
-        self.assertEqual(setup.params.duration, _AUTO_DURATION_SENTINEL)
-
-    def test_negative_duration_gets_auto_sentinel(self):
-        """Negative duration (-1) should pass as auto-sentinel for LM auto-calculation."""
-        setup = build_generation_setup(
-            req=self._base_req(),
-            caption="cap",
-            lyrics="lyr",
-            bpm=None,
-            key_scale="",
-            time_signature="",
-            audio_duration=-1.0,
-            thinking=False,
-            sample_mode=False,
-            format_has_duration=False,
-            use_cot_caption=False,
-            use_cot_language=False,
-            lm_top_k=0,
-            lm_top_p=0.9,
-            parse_timesteps=lambda _: None,
-            is_instrumental=lambda _: False,
-            default_dit_instruction="default instruction",
-            task_instructions={},
-        )
-        self.assertEqual(setup.params.duration, _AUTO_DURATION_SENTINEL)
-
-    def test_explicit_duration_preserved(self):
-        """When audio_duration is explicitly set, it should be preserved."""
-        setup = build_generation_setup(
-            req=self._base_req(),
-            caption="cap",
-            lyrics="lyr",
-            bpm=None,
-            key_scale="",
-            time_signature="",
-            audio_duration=60.0,
-            thinking=False,
-            sample_mode=False,
-            format_has_duration=False,
-            use_cot_caption=False,
-            use_cot_language=False,
-            lm_top_k=0,
-            lm_top_p=0.9,
-            parse_timesteps=lambda _: None,
-            is_instrumental=lambda _: False,
-            default_dit_instruction="default instruction",
-            task_instructions={},
-        )
-        self.assertEqual(setup.params.duration, 60.0)
-
-
-# ---------------------------------------------------------------------------
 # Fix 5: BPM sentinel normalization (issue #1022)
 # ---------------------------------------------------------------------------
 
-@unittest.skipIf(build_generation_setup is None, f"import unavailable: {_IMPORT_ERROR}")
+@unittest.skipIf(LLMHandler is None, f"import unavailable: {_IMPORT_ERROR}")
 class BpmSentinelNormalizationTests(unittest.TestCase):
     """Negative/zero BPM must be normalized to None for auto-detection."""
 
