@@ -1,6 +1,6 @@
-"""Flow-edit sampling loop, shared across DiT base variants (issue #1156).
+"""FlowEdit sampling loop.
 
-Ports ACE-Step 1.0's ``flowedit_diffusion_process``: edit an existing clip
+Edit an existing clip
 toward a new caption/lyrics by integrating ``V_delta = V_tar - V_src`` over
 a sub-window ``[n_min, n_max]`` of the diffusion schedule.
 
@@ -16,15 +16,13 @@ Edit window step::
 After ``i ≥ n_max`` we Euler-step a target-only running variable
 ``xt_tar = zt_edit + xt_src - x_src``, denoising the edited content.
 
-v1 supports euler + plain CFG + APG + CFG interval + velocity clamp/EMA,
+Supports Euler sampling, CFG, APG, CFG intervals, and velocity clamp/EMA,
 all with **independent state per trajectory** (separate APG momentum,
 prev_vt, KV cache for src and tar).  Inside the n_avg inner loop APG
 momentum is snapshot-and-restored so each MC draw uses the same
 pre-step state — without that the buffer would advance n_avg times,
 making guidance depend on draw order.  EMA is applied once per step
-on the averaged velocity.  DCW, heun, ADG are deferred to follow-ups.
-
-Helpers live in :mod:`.flow_edit_helpers` per the 200 LOC module cap.
+on the averaged velocity.  DCW, Heun and ADG are not used.
 """
 
 from __future__ import annotations

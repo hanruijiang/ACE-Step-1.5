@@ -141,16 +141,6 @@ class InitServiceMemoryBasicMixin:
             return False
         return isinstance(t, cls)
 
-    def _has_quantized_params(self, module):
-        """True if module (or any submodule) has an AffineQuantizedTensor parameter."""
-        cls = self._get_affine_quantized_tensor_class()
-        if cls is None:
-            return False
-        for _, param in module.named_parameters():
-            if param is not None and isinstance(param, cls):
-                return True
-        return False
-
     def _ensure_silence_latent_on_device(self):
         """Ensure ``silence_latent`` is on ``self.device``."""
         if hasattr(self, "silence_latent") and self.silence_latent is not None:

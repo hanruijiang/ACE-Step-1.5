@@ -105,18 +105,15 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
         self.assertTrue(host._resolve_service_dcw_enabled({}))
         self.assertFalse(host._resolve_service_dcw_enabled({"dcw_enabled": False}))
 
-    def test_service_execution_resolves_dcw_for_pytorch_fallback(self):
-        """MLX fallback should use the same non-Turbo DCW value as PyTorch."""
+    def test_service_execution_resolves_dcw_for_pytorch(self):
+        """PyTorch should use the non-Turbo DCW default."""
         host = _Host()
         host.config = types.SimpleNamespace(is_turbo=False)
-        host.use_mlx_dit = True
-        host.mlx_decoder = object()
         host.model = MagicMock()
         condition = torch.zeros(1, 4, 4)
         host.model.prepare_condition.return_value = (condition, condition, condition)
         host.model.generate_audio.return_value = {"target_latents": condition}
         host._load_model_context = lambda _name: nullcontext()
-        host._mlx_run_diffusion = MagicMock(side_effect=RuntimeError("MLX failed"))
         payload = {
             "text_hidden_states": condition,
             "text_attention_mask": condition,
@@ -141,7 +138,6 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
             audio_cover_strength=1.0,
         )
 
-        self.assertFalse(host._mlx_run_diffusion.call_args.kwargs["dcw_enabled"])
         self.assertFalse(host.model.generate_audio.call_args.kwargs["dcw_enabled"])
 
 

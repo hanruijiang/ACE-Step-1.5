@@ -1,4 +1,4 @@
-"""Execution helper for ``generate_music`` service invocation with progress tracking."""
+"""Execution helper for ``generate_music`` service invocation with timeout handling."""
 
 import os
 import threading
@@ -6,16 +6,13 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from loguru import logger
 
-# Maximum wall-clock seconds to wait for service_generate before declaring a hang.
-# Generous default: most generations finish in 30-120s, but large batches on slow
-# GPUs can take several minutes.  Override via ACESTEP_GENERATION_TIMEOUT env var.
-_DEFAULT_GENERATION_TIMEOUT = int(os.environ.get("ACESTEP_GENERATION_TIMEOUT", "600"))
+# A positive timeout is opt-in; zero runs synchronously.
 
 
 class GenerateMusicExecuteMixin:
-    """Run service generation under diffusion progress estimation lifecycle."""
+    """Run service generation with an optional timeout."""
 
-    def _run_generate_music_service_with_progress(
+    def _run_generate_music_service(
         self,
         progress: Any,
         actual_batch_size: int,
@@ -54,23 +51,10 @@ class GenerateMusicExecuteMixin:
         flow_edit_n_max: float = 1.0,
         flow_edit_n_avg: int = 1,
     ) -> Dict[str, Any]:
-        """Invoke ``service_generate`` while maintaining background progress estimation.
+        """Invoke service generation with a timeout and optional stage callback."""
+        if progress:
+            progress(0.52, desc=f"Generating music (batch size: {actual_batch_size})...")
 
-        Wraps the synchronous CUDA call in a monitored thread so that a hung
-        diffusion loop becomes a recoverable ``TimeoutError`` instead of a
-        permanent UI freeze.
-        """
-        infer_steps_for_progress = len(timesteps) if timesteps else inference_steps
-        progress_desc = f"Generating music (batch size: {actual_batch_size})..."
-        progress(0.52, desc=progress_desc)
-        stop_event = None
-        progress_thread = None
-
-        # --- Timeout-wrapped service_generate ---
-        # Run the actual CUDA work in a child thread so we can join() with a
-        # deadline.  If it exceeds the timeout the calling thread unblocks and
-        # raises TimeoutError, which propagates to generate_music()'s
-        # try/except and becomes a clean error payload for the UI.
         _result: Dict[str, Any] = {}
         _error: Dict[str, BaseException] = {}
 
@@ -125,44 +109,34 @@ class GenerateMusicExecuteMixin:
             except Exception as exc:
                 _error["exc"] = exc
 
-        try:
-            stop_event, progress_thread = self._start_diffusion_progress_estimator(
-                progress=progress,
-                start=0.52,
-                end=0.79,
-                infer_steps=infer_steps_for_progress,
-                batch_size=actual_batch_size,
-                duration_sec=audio_duration if audio_duration and audio_duration > 0 else None,
-                desc=progress_desc,
-            )
-
-            gen_thread = threading.Thread(
-                target=_service_target,
-                name="service-generate",
-                daemon=True,
-            )
-            gen_thread.start()
-            gen_thread.join(timeout=_DEFAULT_GENERATION_TIMEOUT)
-
-            if gen_thread.is_alive():
-                logger.error(
-                    f"[generate_music] service_generate exceeded {_DEFAULT_GENERATION_TIMEOUT}s "
-                    f"timeout (batch={actual_batch_size}, steps={inference_steps}, "
-                    f"duration={audio_duration}s).  The CUDA operation may still be "
-                    f"running in the background."
-                )
-                raise TimeoutError(
-                    f"Music generation timed out after {_DEFAULT_GENERATION_TIMEOUT} seconds.  "
-                    f"This usually means the GPU ran out of VRAM or the diffusion loop "
-                    f"stalled.  Try reducing batch size, duration, or inference steps."
-                )
+        timeout = int(os.environ.get("ACESTEP_GENERATION_TIMEOUT", "0"))
+        if timeout <= 0:
+            _service_target()
             if "exc" in _error:
                 raise _error["exc"]
+            return {"outputs": _result["outputs"]}
 
-        finally:
-            if stop_event is not None:
-                stop_event.set()
-            if progress_thread is not None:
-                progress_thread.join(timeout=1.0)
+        gen_thread = threading.Thread(
+            target=_service_target,
+            name="service-generate",
+            daemon=True,
+        )
+        gen_thread.start()
+        gen_thread.join(timeout=timeout)
 
-        return {"outputs": _result["outputs"], "infer_steps_for_progress": infer_steps_for_progress}
+        if gen_thread.is_alive():
+            logger.error(
+                f"[generate_music] service_generate exceeded {timeout}s "
+                f"timeout (batch={actual_batch_size}, steps={inference_steps}, "
+                f"duration={audio_duration}s).  The CUDA operation may still be "
+                f"running in the background."
+            )
+            raise TimeoutError(
+                f"Music generation timed out after {timeout} seconds.  "
+                f"This usually means the GPU ran out of VRAM or the diffusion loop "
+                f"stalled.  Try reducing batch size, duration, or inference steps."
+            )
+        if "exc" in _error:
+            raise _error["exc"]
+
+        return {"outputs": _result["outputs"]}

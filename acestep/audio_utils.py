@@ -3,23 +3,53 @@ Audio saving and transcoding utility module
 
 Independent audio file operations outside of handler, supporting:
 - Save audio tensor/numpy to files (default FLAC format, fast)
-- Format conversion (FLAC/WAV/MP3)
-- Batch processing
+- Export audio in supported file formats
 """
 
 
-import io
 import json
-import os
 import subprocess
 import hashlib
 import tempfile
 from pathlib import Path
-from typing import Union, Optional, List, Tuple
+from typing import Union, Optional
 import torch
 import numpy as np
 import torchaudio
+import soundfile as sf
 from loguru import logger
+
+
+SUPPORTED_AUDIO_FORMATS = ("wav", "wav32", "flac", "mp3", "opus", "aac")
+
+
+def _decode_audio_ffmpeg(path):
+    """Decode to a seekable float WAV so sample rate and channel count are preserved."""
+    with tempfile.TemporaryDirectory() as directory:
+        target = Path(directory) / "decoded.wav"
+        subprocess.run(
+            ["ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+             "-i", str(path), "-map", "0:a:0", "-c:a", "pcm_f32le", str(target)],
+            check=True, capture_output=True, timeout=120,
+        )
+        return sf.read(str(target), dtype="float32")
+
+
+def read_audio_file(path):
+    """Return float32 samples-first audio and native sample rate."""
+    try:
+        return sf.read(str(path), dtype="float32")
+    except Exception as sf_error:
+        try:
+            return _decode_audio_ffmpeg(path)
+        except Exception as ffmpeg_error:
+            detail = getattr(ffmpeg_error, "stderr", None)
+            if isinstance(detail, bytes):
+                detail = detail.decode("utf-8", errors="replace")
+            raise RuntimeError(
+                f"Cannot read {path!s}: soundfile ({sf_error}); FFmpeg ({detail or ffmpeg_error}). "
+                "Ensure ffmpeg is installed and on PATH."
+            ) from ffmpeg_error
 
 
 def apply_fade(
@@ -127,9 +157,8 @@ class AudioSaver:
             default_format: Default save format ('flac', 'wav', 'mp3', 'wav32', 'opus', 'aac')
         """
         self.default_format = default_format.lower()
-        if self.default_format not in ["flac", "wav", "mp3", "wav32", "opus", "aac"]:
-            logger.warning(f"Unsupported format {default_format}, using 'flac'")
-            self.default_format = "flac"
+        if self.default_format not in SUPPORTED_AUDIO_FORMATS:
+            raise ValueError(f"Unsupported audio format: {default_format}")
     
     def _save_mp3(
         self,
@@ -155,44 +184,32 @@ class AudioSaver:
         if int(input_sample_rate) != int(target_sample_rate):
             tensor_to_save = torchaudio.functional.resample(audio_tensor, int(input_sample_rate), int(target_sample_rate))
 
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_wav:
-            temp_wav_path = Path(temp_wav.name)
+        self._save_compressed(tensor_to_save, output_path, target_sample_rate, "libmp3lame", ["-ar", str(target_sample_rate), "-b:a", bitrate])
 
-        try:
-            import soundfile as sf
-
-            audio_np = tensor_to_save.detach().cpu()
+    def _save_compressed(self, audio_tensor, output_path, sample_rate, codec, options=None):
+        """Encode using the FFmpeg executable, independent of TorchAudio backends."""
+        with tempfile.TemporaryDirectory() as directory:
+            temp_wav_path = Path(directory) / "input.wav"
+            audio_np = audio_tensor.detach().cpu()
             if audio_np.dim() == 2:
                 audio_np = audio_np.transpose(0, 1)
-            audio_np = audio_np.contiguous()
-            sf.write(
-                str(temp_wav_path),
-                audio_np.numpy(),
-                int(target_sample_rate),
-                format="WAV",
-            )
+            sf.write(str(temp_wav_path), audio_np.contiguous().numpy(), int(sample_rate),
+                     format="WAV", subtype="FLOAT")
             cmd = [
-                'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-                '-i', str(temp_wav_path),
-                '-codec:a', 'libmp3lame',
-                '-ar', str(int(target_sample_rate)),
-                '-b:a', bitrate,
-                str(output_path),
+                "ffmpeg", "-nostdin", "-y", "-hide_banner", "-loglevel", "error",
+                "-i", str(temp_wav_path), "-codec:a", codec,
+                *(options or []), str(output_path),
             ]
-            subprocess.run(cmd, check=True, capture_output=True, timeout=120)
-            logger.debug(f"[AudioSaver] Saved audio to {output_path} (mp3, {target_sample_rate}Hz, {bitrate})")
-        except FileNotFoundError as e:
-            raise RuntimeError("ffmpeg executable not found. Install ffmpeg or add it to PATH to export MP3 files.") from e
-        except subprocess.TimeoutExpired as e:
-            raise RuntimeError("ffmpeg MP3 export timed out after 120 seconds.") from e
-        except subprocess.CalledProcessError as e:
-            stderr = e.stderr.decode('utf-8', errors='ignore') if e.stderr else str(e)
-            raise RuntimeError(f"ffmpeg MP3 export failed: {stderr}") from e
-        finally:
             try:
-                temp_wav_path.unlink(missing_ok=True)
-            except Exception:
-                logger.warning(f"[AudioSaver] Failed to remove temporary WAV file: {temp_wav_path}")
+                subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+            except FileNotFoundError as exc:
+                raise RuntimeError("ffmpeg executable not found; install FFmpeg and add it to PATH.") from exc
+            except subprocess.TimeoutExpired as exc:
+                raise RuntimeError("FFmpeg audio export timed out after 120 seconds.") from exc
+            except subprocess.CalledProcessError as exc:
+                detail = exc.stderr.decode("utf-8", errors="replace") if exc.stderr else str(exc)
+                raise RuntimeError(f"FFmpeg audio export failed: {detail}") from exc
+            logger.debug(f"[AudioSaver] Saved audio to {output_path} ({codec})")
 
     def save_audio(
         self,
@@ -220,9 +237,8 @@ class AudioSaver:
             Actual saved file path
         """
         format = (format or self.default_format).lower()
-        if format not in ["flac", "wav", "mp3", "wav32", "opus", "aac"]:
-            logger.warning(f"Unsupported format {format}, using {self.default_format}")
-            format = self.default_format
+        if format not in SUPPORTED_AUDIO_FORMATS:
+            raise ValueError(f"Unsupported audio format: {format}")
         
         # Ensure output path has correct extension
         output_path = Path(output_path)
@@ -230,15 +246,9 @@ class AudioSaver:
         # Determine extension based on format
         ext = ".wav" if format == "wav32" else f".{format}"
         
-        if output_path.suffix.lower() not in ['.flac', '.wav', '.mp3', '.opus', '.aac', '.m4a']:
+        if not (format == "aac" and output_path.suffix.lower() == ".m4a"):
             output_path = output_path.with_suffix(ext)
-        elif format == "wav32" and output_path.suffix.lower() == ".wav32":
-             # Explicitly fix .wav32 extension if present
-             output_path = output_path.with_suffix(".wav")
-        elif format == "aac" and output_path.suffix.lower() == ".m4a":
-             # Allow .m4a as valid extension for AAC (it's a container format for AAC)
-             pass
-        
+
         # Convert to torch tensor
         if isinstance(audio_data, np.ndarray):
             if channels_first:
@@ -261,278 +271,20 @@ class AudioSaver:
         # Ensure memory is contiguous
         audio_tensor = audio_tensor.contiguous()
         
-        # Select backend and save
-        try:
-            if format == "mp3":
-                self._save_mp3(
-                    audio_tensor,
-                    output_path,
-                    sample_rate,
-                    mp3_bitrate=mp3_bitrate,
-                    mp3_sample_rate=mp3_sample_rate,
-                )
-                return str(output_path)
-            elif format in ["opus", "aac"]:
-                # Opus and AAC use ffmpeg backend
-                torchaudio.save(
-                    str(output_path),
-                    audio_tensor,
-                    sample_rate,
-                    channels_first=True,
-                    backend='ffmpeg',
-                )
-            elif format in ["flac", "wav", "wav32"]:
-                # FLAC and WAV use soundfile backend (fastest)
-                # handle 32-bit float wav
-                if format == "wav32":
-                    try:
-                        import soundfile as sf
-                        
-                        # Use soundfile directly for 32-bit float
-                        audio_np = audio_tensor.transpose(0, 1).numpy() # [channels, samples] -> [samples, channels]
-                        
-                        # Explicitly specify format as WAV to avoid issues with extension detection or custom extensions
-                        sf.write(str(output_path), audio_np, sample_rate, subtype='FLOAT', format='WAV')
-                        logger.debug(f"[AudioSaver] Saved audio to {output_path} (wav32, {sample_rate}Hz)")
-                        return str(output_path)
-                    except Exception as e:
-                        logger.error(f"Failed to save wav32: {e}, falling back to standard wav")
-                        format = "wav"
-                        # Fallthrough to standard wav saving
-
-                torchaudio.save(
-                    str(output_path),
-                    audio_tensor,
-                    sample_rate,
-                    channels_first=True,
-                    backend='soundfile',
-                )
-            else:
-                # Other formats use default backend
-                torchaudio.save(
-                    str(output_path),
-                    audio_tensor,
-                    sample_rate,
-                    channels_first=True,
-                )
-            
-            logger.debug(f"[AudioSaver] Saved audio to {output_path} ({format}, {sample_rate}Hz)")
-            return str(output_path)
-            
-        except Exception as e:
-            if format == "mp3":
-                logger.error(f"[AudioSaver] MP3 export failed without fallback: {e}")
-                raise
-            try:
-                import soundfile as sf
-                audio_np = audio_tensor.transpose(0, 1).numpy()  # -> [samples, channels]
-                
-                # Handle wav32 fallback formatting
-                if format == "wav32":
-                    sf_format = "WAV"
-                    subtype = "FLOAT"
-                else:
-                    sf_format = format.upper()
-                    subtype = None
-                    
-                sf.write(str(output_path), audio_np, sample_rate, format=sf_format, subtype=subtype)
-                logger.debug(f"[AudioSaver] Fallback soundfile Saved audio to {output_path} ({format}, {sample_rate}Hz)")
-                return str(output_path)
-            except Exception as inner_e:
-                logger.error(f"[AudioSaver] Failed to save audio: {e} -> Fallback failed: {inner_e}")
-                raise
-    
-    def convert_audio(
-        self,
-        input_path: Union[str, Path],
-        output_path: Union[str, Path],
-        output_format: str,
-        remove_input: bool = False,
-        mp3_bitrate: Optional[str] = None,
-        mp3_sample_rate: Optional[int] = None,
-    ) -> str:
-        """
-        Convert audio format
-        
-        Args:
-            input_path: Input audio file path
-            output_path: Output audio file path
-            output_format: Target format ('flac', 'wav', 'mp3', 'wav32', 'opus', 'aac')
-            remove_input: Whether to delete input file
-            mp3_bitrate: Optional MP3 bitrate override (128k/192k/256k/320k)
-            mp3_sample_rate: Optional MP3 sample rate override (44100/48000)
-
-        Returns:
-            Output file path
-        """
-        input_path = Path(input_path)
-        output_path = Path(output_path)
-        
-        if not input_path.exists():
-            raise FileNotFoundError(f"Input file not found: {input_path}")
-        
-        # Load audio
-        audio_tensor, sample_rate = torchaudio.load(str(input_path))
-        
-        # Save as new format
-        output_path = self.save_audio(
-            audio_tensor,
-            output_path,
-            sample_rate=sample_rate,
-            format=output_format,
-            channels_first=True,
-            mp3_bitrate=mp3_bitrate,
-            mp3_sample_rate=mp3_sample_rate,
-        )
-        
-        # Delete input file if needed
-        if remove_input:
-            input_path.unlink()
-            logger.debug(f"[AudioSaver] Removed input file: {input_path}")
-        
-        return output_path
-    
-    def save_batch(
-        self,
-        audio_batch: Union[List[torch.Tensor], torch.Tensor],
-        output_dir: Union[str, Path],
-        file_prefix: str = "audio",
-        sample_rate: int = 48000,
-        format: Optional[str] = None,
-        channels_first: bool = True,
-        mp3_bitrate: Optional[str] = None,
-        mp3_sample_rate: Optional[int] = None,
-    ) -> List[str]:
-        """
-        Save audio batch
-        
-        Args:
-            audio_batch: Audio batch, List[tensor] or tensor [batch, channels, samples]
-            output_dir: Output directory
-            file_prefix: File prefix
-            sample_rate: Sample rate
-            format: Audio format
-            channels_first: Tensor format flag
-            mp3_bitrate: Optional MP3 bitrate override (128k/192k/256k/320k)
-            mp3_sample_rate: Optional MP3 sample rate override (44100/48000)
-
-        Returns:
-            List of saved file paths
-        """
-        output_dir = Path(output_dir)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Process batch
-        if isinstance(audio_batch, torch.Tensor) and audio_batch.dim() == 3:
-            # [batch, channels, samples]
-            audio_list = [audio_batch[i] for i in range(audio_batch.shape[0])]
-        elif isinstance(audio_batch, list):
-            audio_list = audio_batch
+        if format == "mp3":
+            self._save_mp3(audio_tensor, output_path, sample_rate,
+                           mp3_bitrate=mp3_bitrate, mp3_sample_rate=mp3_sample_rate)
+        elif format in ("opus", "aac"):
+            codec = "libopus" if format == "opus" else "aac"
+            self._save_compressed(audio_tensor, output_path, sample_rate, codec)
         else:
-            audio_list = [audio_batch]
-        
-        saved_paths = []
-        for i, audio in enumerate(audio_list):
-            output_path = output_dir / f"{file_prefix}_{i:04d}"
-            saved_path = self.save_audio(
-                audio,
-                output_path,
-                sample_rate=sample_rate,
-                format=format,
-                channels_first=channels_first,
-                mp3_bitrate=mp3_bitrate,
-                mp3_sample_rate=mp3_sample_rate,
-            )
-            saved_paths.append(saved_path)
-        
-        return saved_paths
-
-
-def get_lora_weights_hash(dit_handler) -> str:
-    """Compute an MD5 hash identifying the currently loaded LoRA adapter weights.
-
-    Iterates over the handler's LoRA service registry to find adapter weight
-    file paths, then hashes each file to produce a combined fingerprint.
-
-    Args:
-        dit_handler: DiT handler instance with LoRA state attributes.
-
-    Returns:
-        Hex digest string uniquely identifying the loaded LoRA weights,
-        or empty string if no LoRA is active.
-    """
-    if not getattr(dit_handler, "lora_loaded", False):
-        return ""
-    if not getattr(dit_handler, "use_lora", False):
-        return ""
-
-    lora_service = getattr(dit_handler, "_lora_service", None)
-    if lora_service is None or not lora_service.registry:
-        return ""
-
-    hash_obj = hashlib.sha256()
-    found_any = False
-
-    for adapter_name in sorted(lora_service.registry.keys()):
-        meta = lora_service.registry[adapter_name]
-        lora_path = meta.get("path")
-        if not lora_path:
-            continue
-
-        # Try common weight file names at lora_path
-        candidates = []
-        if os.path.isfile(lora_path):
-            candidates.append(lora_path)
-        elif os.path.isdir(lora_path):
-            for fname in (
-                "adapter_model.safetensors",
-                "adapter_model.bin",
-                "lokr_weights.safetensors",
-            ):
-                fpath = os.path.join(lora_path, fname)
-                if os.path.isfile(fpath):
-                    candidates.append(fpath)
-
-        for fpath in candidates:
-            try:
-                with open(fpath, "rb") as f:
-                    while True:
-                        chunk = f.read(1 << 20)  # 1 MB chunks
-                        if not chunk:
-                            break
-                        hash_obj.update(chunk)
-                found_any = True
-            except OSError:
-                continue
-
-    return hash_obj.hexdigest() if found_any else ""
-
-
-def get_audio_file_hash(audio_file) -> str:
-    """
-    Get hash identifier for an audio file.
-    
-    Args:
-        audio_file: Path to audio file (str) or file-like object
-    
-    Returns:
-        Hash string or empty string
-    """
-    if audio_file is None:
-        return ""
-    
-    try:
-        if isinstance(audio_file, str):
-            if os.path.exists(audio_file):
-                with open(audio_file, 'rb') as f:
-                    return hashlib.sha256(f.read()).hexdigest()
-            return hashlib.sha256(audio_file.encode('utf-8')).hexdigest()
-        elif hasattr(audio_file, 'name'):
-            return hashlib.sha256(str(audio_file.name).encode('utf-8')).hexdigest()
-        return hashlib.sha256(str(audio_file).encode('utf-8')).hexdigest()
-    except Exception:
-        return hashlib.sha256(str(audio_file).encode('utf-8')).hexdigest()
-
+            audio_np = audio_tensor.detach().cpu()
+            if audio_np.dim() == 2:
+                audio_np = audio_np.transpose(0, 1)
+            sf.write(str(output_path), audio_np.contiguous().numpy(), sample_rate,
+                     format="WAV" if format == "wav32" else format.upper(),
+                     subtype="FLOAT" if format == "wav32" else None)
+        return str(output_path)
 
 def generate_uuid_from_params(params_dict) -> str:
     """
@@ -551,36 +303,6 @@ def generate_uuid_from_params(params_dict) -> str:
     hash_hex = hash_obj.hexdigest()
     uuid_str = f"{hash_hex[0:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
     return uuid_str
-
-
-def generate_uuid_from_audio_data(
-    audio_data: Union[torch.Tensor, np.ndarray],
-    seed: Optional[int] = None
-) -> str:
-    """
-    Generate UUID from audio data (for caching/deduplication)
-    
-    Args:
-        audio_data: Audio data
-        seed: Optional seed value
-    
-    Returns:
-        UUID string
-    """
-    if isinstance(audio_data, torch.Tensor):
-        # Convert to numpy and calculate hash
-        audio_np = audio_data.cpu().numpy()
-    else:
-        audio_np = audio_data
-    
-    # Calculate data hash
-    data_hash = hashlib.sha256(audio_np.tobytes()).hexdigest()
-    
-    if seed is not None:
-        combined = f"{data_hash}_{seed}"
-        return hashlib.sha256(combined.encode()).hexdigest()
-    
-    return data_hash
 
 
 # Global default instance

@@ -53,12 +53,6 @@ class MetadataMixin:
             parsed_metas.append(parsed_meta)
         return parsed_metas
 
-    def prepare_metadata(
-        self, bpm: Optional[Union[int, str]], key_scale: str, time_signature: str
-    ) -> Dict[str, Any]:
-        """Build metadata dict for generation."""
-        return self._build_metadata_dict(bpm, key_scale, time_signature)
-
     def _build_metadata_dict(
         self,
         bpm: Optional[Union[int, str]],

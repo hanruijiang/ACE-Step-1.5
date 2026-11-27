@@ -39,9 +39,6 @@ class RecordingDitHandler:
     def __init__(self):
         """Initialize with no captured call; ``generate_kwargs`` stays None until called."""
         self.generate_kwargs = None
-        self.lora_loaded = False
-        self.use_lora = False
-        self.lora_scale = 1.0
 
     def prepare_seeds(self, batch_size, seed, use_random_seed):
         """Return a fixed seed list so the run is deterministic.

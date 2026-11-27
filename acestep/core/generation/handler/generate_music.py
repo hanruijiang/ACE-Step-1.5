@@ -56,53 +56,6 @@ class GenerateMusicMixin:
     orchestration flow.
     """
 
-    def _verify_decoder_device_dtype(self) -> None:
-        """Ensure all decoder parameters are on ``self.device`` and ``self.dtype``.
-
-        CPU-offload round-trips can leave PEFT/LoRA adapter weights on the
-        wrong device or in the wrong dtype, which silently produces NaN/Inf
-        during the diffusion forward pass.  This method detects and fixes
-        such mismatches before generation begins.
-        """
-        decoder = getattr(self.model, "decoder", None)
-        if decoder is None:
-            return
-
-        wrong_device = []
-        wrong_dtype = []
-        for name, param in decoder.named_parameters():
-            if not self._is_on_target_device(param, self.device):
-                wrong_device.append(name)
-            if param.is_floating_point() and param.dtype != self.dtype:
-                wrong_dtype.append(name)
-
-        if wrong_device or wrong_dtype:
-            if wrong_device:
-                logger.warning(
-                    f"[generate_music] LoRA sanity check: {len(wrong_device)} decoder "
-                    f"parameters on wrong device (expected {self.device}), fixing: "
-                    f"{wrong_device[:5]}{'...' if len(wrong_device) > 5 else ''}"
-                )
-            if wrong_dtype:
-                logger.warning(
-                    f"[generate_music] LoRA sanity check: {len(wrong_dtype)} decoder "
-                    f"parameters have wrong dtype (expected {self.dtype}), fixing: "
-                    f"{wrong_dtype[:5]}{'...' if len(wrong_dtype) > 5 else ''}"
-                )
-            decoder.to(device=self.device, dtype=self.dtype)
-
-        # Final verification — use recursive move if simple .to() wasn't enough
-        still_wrong = [
-            name for name, p in decoder.named_parameters()
-            if not self._is_on_target_device(p, self.device)
-        ]
-        if still_wrong:
-            logger.warning(
-                f"[generate_music] {len(still_wrong)} params still on wrong device "
-                f"after decoder.to(), using recursive move"
-            )
-            self._recursive_to_device(decoder, self.device, self.dtype)
-
     def _vram_preflight_check(
         self,
         actual_batch_size: int,
@@ -268,8 +221,6 @@ class GenerateMusicMixin:
                 from ``dcw_scaler`` at ``t=1`` to 0 at ``t=0``.
             dcw_high_scaler: High-band strength — only used in ``"double"`` mode.
             dcw_wavelet: PyWavelets basis, e.g. ``"haar"`` / ``"db4"`` / ``"sym8"``.
-                On the MLX path only ``"haar"`` is implemented natively; other
-                bases warn once and fall back to Haar.
             timesteps: Optional custom timestep schedule.
             use_tiled_decode: Whether tiled VAE decode is used.
             latent_shift: Additive latent post-processing value.
@@ -286,7 +237,6 @@ class GenerateMusicMixin:
             No exceptions are re-raised. Runtime failures are converted into the
             returned error payload.
         """
-        progress = self._resolve_generate_music_progress(progress)
         if self.model is None or self.vae is None or self.text_tokenizer is None or self.text_encoder is None:
             readiness_error = self._validate_generate_music_readiness()
             return readiness_error
@@ -297,9 +247,7 @@ class GenerateMusicMixin:
             instruction=instruction,
         )
 
-        # Neutralize stale cover-only params for text2music; preserve them for
-        # source-audio tasks. All entry points (single/batch/API) pass through
-        # here (issue #1271).
+        # Apply cover parameters only to source-audio tasks.
         audio_cover_strength, cover_noise_strength = self._neutralize_cover_only_params(
             task_type=task_type,
             audio_cover_strength=audio_cover_strength,
@@ -308,7 +256,7 @@ class GenerateMusicMixin:
 
         # Turbo models bake guidance into the distillation process and do not
         # use CFG.  Forcing guidance_scale to 1.0 avoids double-application of
-        # guidance that produces noise or NaN/Inf on float16 (see issue #927).
+        # guidance that produces noise or NaN/Inf on float16.
         if self.is_turbo_model() and guidance_scale != 1.0:
             logger.info(
                 "[generate_music] Turbo model detected: overriding "
@@ -317,14 +265,6 @@ class GenerateMusicMixin:
             )
             guidance_scale = 1.0
         dcw_enabled = self._resolve_dcw_enabled(dcw_enabled)
-
-        # When LoRA is active, verify all decoder parameters are on the
-        # expected device and dtype.  CPU-offload round-trips can leave PEFT
-        # adapter weights on the wrong device, causing NaN in the diffusion
-        # forward pass.  The check is cheap and prevents a hard-to-debug
-        # generation failure.
-        if getattr(self, "lora_loaded", False) and getattr(self, "use_lora", False):
-            self._verify_decoder_device_dtype()
 
         logger.info("[generate_music] Starting generation...")
         if progress:
@@ -367,14 +307,11 @@ class GenerateMusicMixin:
             ):
                 audio_duration = processed_src_audio.shape[-1] / self.sample_rate
 
-            # Flow-edit overlay v1: text2music (silence-context) and
-            # cover / cover-nofsq (shared LM-codes context). Repaint /
-            # extract / lego need paired-CFG derivation per task shape
-            # and are left for follow-up.
+            # FlowEdit supports text2music and cover tasks.
             if flow_edit_morph and task_type not in ("text2music", "cover", "cover-nofsq"):
                 logger.warning(
                     "[generate_music] flow_edit_morph=True but task_type={!r}; "
-                    "v1 overlay only applies to text2music / cover / cover-nofsq, ignoring.",
+                    "FlowEdit supports text2music, cover and cover-nofsq only.",
                     task_type,
                 )
 
@@ -421,7 +358,7 @@ class GenerateMusicMixin:
                 _resolve_repaint_config(repaint_mode, repaint_strength)
             )
 
-            service_run = self._run_generate_music_service_with_progress(
+            service_run = self._run_generate_music_service(
                 progress=progress,
                 actual_batch_size=actual_batch_size,
                 audio_duration=audio_duration,
@@ -460,13 +397,9 @@ class GenerateMusicMixin:
                 flow_edit_n_avg=flow_edit_n_avg,
             )
             outputs = service_run["outputs"]
-            infer_steps_for_progress = service_run["infer_steps_for_progress"]
 
             pred_latents, time_costs = self._prepare_generate_music_decode_state(
                 outputs=outputs,
-                infer_steps_for_progress=infer_steps_for_progress,
-                actual_batch_size=actual_batch_size,
-                audio_duration=audio_duration,
                 latent_shift=latent_shift,
                 latent_rescale=latent_rescale,
             )

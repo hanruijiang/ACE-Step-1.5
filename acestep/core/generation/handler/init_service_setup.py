@@ -61,25 +61,20 @@ class InitServiceSetupMixin:
         device: str,
         compile_model: bool,
         quantization: Optional[str],
-    ) -> Tuple[bool, Optional[str], bool]:
+    ) -> Tuple[bool, Optional[str]]:
         """Apply backend constraints and return normalized compile/quantization settings."""
-        mlx_compile_requested = False
         normalized_compile = compile_model
         normalized_quantization = quantization
 
         if device == "mps":
             if normalized_compile:
-                logger.info(
-                    "[initialize_service] MPS detected: torch.compile is not "
-                    "supported - redirecting to mx.compile for MLX components."
-                )
-                mlx_compile_requested = True
+                logger.warning("[initialize_service] torch.compile is disabled on MPS.")
                 normalized_compile = False
             if normalized_quantization is not None:
                 logger.warning("[initialize_service] Quantization (torchao) is not supported on MPS; disabling.")
                 normalized_quantization = None
 
-        return normalized_compile, normalized_quantization, mlx_compile_requested
+        return normalized_compile, normalized_quantization
 
     @staticmethod
     def _ensure_len_for_compile(model: Any, method_name: str) -> None:
@@ -111,40 +106,6 @@ class InitServiceSetupMixin:
                 "with this PyTorch build. Please install a compatible torchao version."
             ) from exc
 
-    def _initialize_mlx_backends(
-        self,
-        *,
-        device: str,
-        use_mlx_dit: bool,
-        mlx_compile_requested: bool,
-    ) -> Tuple[str, str]:
-        """Initialize MLX DiT/VAE integrations and return status labels."""
-        mlx_dit_status = "Disabled"
-        if use_mlx_dit and device in ("mps", "cpu"):
-            mlx_ok = self._init_mlx_dit(compile_model=mlx_compile_requested)
-            if mlx_ok:
-                mlx_dit_status = (
-                    "Active (native MLX, mx.compile)"
-                    if mlx_compile_requested
-                    else "Active (native MLX)"
-                )
-            else:
-                mlx_dit_status = "Unavailable (PyTorch fallback)"
-        elif not use_mlx_dit:
-            mlx_dit_status = "Disabled by user"
-            self.mlx_decoder = None
-            self.use_mlx_dit = False
-
-        mlx_vae_status = "Disabled"
-        if device in ("mps", "cpu"):
-            mlx_vae_ok = self._init_mlx_vae()
-            mlx_vae_status = "Active (native MLX)" if mlx_vae_ok else "Unavailable (PyTorch fallback)"
-        else:
-            self.mlx_vae = None
-            self.use_mlx_vae = False
-
-        return mlx_dit_status, mlx_vae_status
-
     @staticmethod
     def _build_initialize_status_message(
         *,
@@ -155,26 +116,21 @@ class InitServiceSetupMixin:
         dtype: torch.dtype,
         attention: str,
         compile_model: bool,
-        mlx_compile_requested: bool,
         offload_to_cpu: bool,
         offload_dit_to_cpu: bool,
         quantization: Optional[str],
-        mlx_dit_status: str,
-        mlx_vae_status: str,
     ) -> str:
-        """Format initialize_service status output for UI/API consumers."""
+        """Format model initialization status."""
         status_msg = f"[OK] Model initialized successfully on {device}\n"
         status_msg += f"Main model: {model_path}\n"
         status_msg += f"VAE: {vae_path}\n"
         status_msg += f"Text encoder: {text_encoder_path}\n"
         status_msg += f"Dtype: {dtype}\n"
         status_msg += f"Attention: {attention}\n"
-        compiled_label = "mx.compile (MLX)" if mlx_compile_requested else str(compile_model)
+        compiled_label = str(compile_model)
         status_msg += f"Compiled: {compiled_label}\n"
         status_msg += f"Quantization: {quantization or 'Disabled'}\n"
         status_msg += f"Offload to CPU: {offload_to_cpu}\n"
         status_msg += f"Offload DiT to CPU: {offload_dit_to_cpu}\n"
-        status_msg += f"MLX DiT: {mlx_dit_status}\n"
-        status_msg += f"MLX VAE: {mlx_vae_status}"
         return status_msg
 

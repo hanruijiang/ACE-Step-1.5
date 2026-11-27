@@ -86,17 +86,9 @@ class _Host(GenerateMusicDecodeMixin):
         """Initialize deterministic runtime state for decode tests."""
         self.current_offload_cost = 0.25
         self.debug_stats = False
-        self._last_diffusion_per_step_sec = None
-        self.estimate_calls = []
         self.progress_calls = []
         self.device = "cpu"
-        self.use_mlx_vae = True
-        self.mlx_vae = object()
         self.vae = _FakeVae()
-
-    def _update_progress_estimate(self, **kwargs):
-        """Capture estimate updates for assertions."""
-        self.estimate_calls.append(kwargs)
 
     @contextmanager
     def _load_model_context(self, _model_name):
@@ -115,11 +107,6 @@ class _Host(GenerateMusicDecodeMixin):
         """Return deterministic max-memory value for debug logging."""
         return 0.0
 
-    def _mlx_vae_decode(self, latents):
-        """Return deterministic decoded waveform for MLX decode branch."""
-        _ = latents
-        return torch.ones(1, 2, 8)
-
     def tiled_decode(self, latents):
         """Return deterministic decoded waveform for tiled decode branch."""
         _ = latents
@@ -129,8 +116,8 @@ class _Host(GenerateMusicDecodeMixin):
 class GenerateMusicDecodeMixinTests(unittest.TestCase):
     """Verify decode-state preparation and latent decode helper behavior."""
 
-    def test_prepare_decode_state_updates_progress_estimates(self):
-        """It updates timing fields and progress estimate metadata for valid latents."""
+    def test_prepare_decode_state_updates_timing(self):
+        """It updates timing fields for valid latents."""
         host = _Host()
         outputs = {
             "target_latents": torch.ones(1, 4, 3),
@@ -138,16 +125,12 @@ class GenerateMusicDecodeMixinTests(unittest.TestCase):
         }
         pred_latents, time_costs = host._prepare_generate_music_decode_state(
             outputs=outputs,
-            infer_steps_for_progress=8,
-            actual_batch_size=1,
-            audio_duration=12.0,
             latent_shift=0.0,
             latent_rescale=1.0,
         )
         self.assertEqual(tuple(pred_latents.shape), (1, 4, 3))
         self.assertEqual(time_costs["offload_time_cost"], 0.25)
-        self.assertEqual(host._last_diffusion_per_step_sec, 0.2)
-        self.assertEqual(host.estimate_calls[0]["infer_steps"], 8)
+        self.assertEqual(time_costs["diffusion_per_step_time_cost"], 0.2)
 
     def test_prepare_decode_state_raises_for_nan_latents(self):
         """It raises runtime error when diffusion latents contain NaN values."""
@@ -159,9 +142,6 @@ class GenerateMusicDecodeMixinTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             host._prepare_generate_music_decode_state(
                 outputs=outputs,
-                infer_steps_for_progress=8,
-                actual_batch_size=1,
-                audio_duration=None,
                 latent_shift=0.0,
                 latent_rescale=1.0,
             )
@@ -219,13 +199,11 @@ class GenerateMusicDecodeMixinTests(unittest.TestCase):
                 return self
 
         class _FailingHost(_Host):
-            """Host variant that forces non-MLX VAE decode and tracks cache clears."""
+            """Host variant that forces PyTorch VAE decode and tracks cache clears."""
 
             def __init__(self):
-                """Set non-MLX state so CPU offload path is exercised deterministically."""
+                """Set PyTorch state so CPU offload path is exercised deterministically."""
                 super().__init__()
-                self.use_mlx_vae = False
-                self.mlx_vae = None
                 self.vae = _FailingVae()
                 self.empty_cache_calls = 0
 
@@ -283,13 +261,11 @@ class GenerateMusicDecodeMixinTests(unittest.TestCase):
                 return self
 
         class _SuccessHost(_Host):
-            """Host that forces non-MLX VAE so the CPU-decode path is exercised."""
+            """Host that forces PyTorch VAE so the CPU-decode path is exercised."""
 
             def __init__(self):
-                """Configure non-MLX state and a tracking VAE."""
+                """Configure PyTorch state and a tracking VAE."""
                 super().__init__()
-                self.use_mlx_vae = False
-                self.mlx_vae = None
                 self.vae = _SuccessVae()
                 self.device = "cuda"
 

@@ -1,6 +1,6 @@
 """Input and preflight helpers for ``generate_music`` orchestration."""
 
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import torch
 from loguru import logger
@@ -10,21 +10,6 @@ from acestep.constants import TASK_INSTRUCTIONS
 
 class GenerateMusicRequestMixin:
     """Prepare normalized ``generate_music`` inputs before service execution."""
-
-    def _resolve_generate_music_progress(
-        self,
-        progress: Optional[Callable[..., Any]],
-    ) -> Callable[..., Any]:
-        """Return a callable progress callback, defaulting to no-op."""
-        if progress is not None:
-            return progress
-
-        def _progress(*args: Any, **kwargs: Any) -> Any:
-            """No-op callback for non-UI call sites."""
-            _ = args, kwargs
-            return None
-
-        return _progress
 
     def _validate_generate_music_readiness(self) -> Optional[Dict[str, Any]]:
         """Return standardized error payload when model components are unavailable."""
@@ -157,7 +142,7 @@ class GenerateMusicRequestMixin:
             if src_audio is not None:
                 logger.info("[generate_music] text2music task does not use src_audio, ignoring")
         elif task_type == "text2music" and flow_edit_morph:
-            # Treat empty string / empty list as missing too — gradio
+            # Treat empty strings and lists as missing inputs.
             # occasionally hands ``""`` instead of ``None`` for cleared
             # components.
             src_audio_missing = (
@@ -284,5 +269,5 @@ class GenerateMusicRequestMixin:
             "target_wavs_tensor": target_wavs_tensor,
             "audio_code_hints_batch": audio_code_hints_batch,
             "chunk_mask_modes_batch": [chunk_mask_mode] * actual_batch_size,
-            "should_return_intermediate": True,
+            "should_return_intermediate": False,
         }

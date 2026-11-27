@@ -1,13 +1,4 @@
-"""Lazy loader for ``pytorch_wavelets`` DWT1D modules used by DCW.
-
-Splitting this out keeps :mod:`acestep.models.common.dcw_correction` under
-the project's 200-LOC module cap.
-
-We import ``pytorch_wavelets`` lazily so the dependency stays optional —
-DCW is opt-in, and users who don't enable it never touch this code path.
-If the import fails when DCW *is* enabled, we log a single warning and
-return ``None`` so callers can short-circuit to a no-op.
-"""
+"""Load and cache wavelet transforms for DCW."""
 
 from __future__ import annotations
 

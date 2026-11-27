@@ -147,13 +147,18 @@ class TestCheckMainModelExists(unittest.TestCase):
                 component_dir = checkpoints_dir / component
                 component_dir.mkdir()
                 (component_dir / "model.safetensors").write_text("weights", encoding="utf-8")
+                (component_dir / "config.json").write_text("{}", encoding="utf-8")
+                if component.startswith("acestep-v15-"):
+                    (component_dir / "silence_latent.pt").touch()
+                if component.startswith("acestep-5Hz-lm-") or component == "Qwen3-Embedding-0.6B":
+                    (component_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
 
             result = self.mod.check_main_model_exists(checkpoints_dir)
 
         self.assertTrue(result)
 
     def test_returns_true_when_vae_uses_diffusers_weight_filename(self):
-        """check_main_model_exists accepts the current Diffusers-style VAE checkpoint filename."""
+        """check_main_model_exists accepts the Diffusers-style VAE checkpoint filename."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             checkpoints_dir = Path(tmp_dir)
             for component in self.mod.MAIN_MODEL_COMPONENTS:
@@ -163,6 +168,11 @@ class TestCheckMainModelExists(unittest.TestCase):
                 if component == "vae":
                     weight_filename = "diffusion_pytorch_model.safetensors"
                 (component_dir / weight_filename).write_text("weights", encoding="utf-8")
+                (component_dir / "config.json").write_text("{}", encoding="utf-8")
+                if component.startswith("acestep-v15-"):
+                    (component_dir / "silence_latent.pt").touch()
+                if component.startswith("acestep-5Hz-lm-") or component == "Qwen3-Embedding-0.6B":
+                    (component_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
 
             result = self.mod.check_main_model_exists(checkpoints_dir)
 
@@ -191,11 +201,13 @@ class TestCheckModelExists(unittest.TestCase):
         self.assertFalse(result)
 
     def test_returns_true_when_model_weights_are_present(self):
-        """check_model_exists accepts directories that contain a weights artifact."""
+        """check_model_exists accepts complete model directories."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             model_dir = Path(tmp_dir) / "acestep-v15-turbo"
             model_dir.mkdir()
             (model_dir / "model.safetensors").write_text("weights", encoding="utf-8")
+            (model_dir / "config.json").write_text("{}", encoding="utf-8")
+            (model_dir / "silence_latent.pt").touch()
 
             result = self.mod.check_model_exists("acestep-v15-turbo", Path(tmp_dir))
 
@@ -277,6 +289,7 @@ class TestCheckVaeExists(unittest.TestCase):
             self.assertFalse(self.mod.check_vae_exists("official", ckpt))
             (ckpt / "vae").mkdir()
             (ckpt / "vae" / "diffusion_pytorch_model.safetensors").write_bytes(b"x")
+            (ckpt / "vae" / "config.json").write_text("{}", encoding="utf-8")
             self.assertTrue(self.mod.check_vae_exists("official", ckpt))
 
     def test_scragvae_detected_in_subdirectory(self):
@@ -286,6 +299,7 @@ class TestCheckVaeExists(unittest.TestCase):
             self.assertFalse(self.mod.check_vae_exists("scragvae", ckpt))
             (ckpt / "scragvae").mkdir()
             (ckpt / "scragvae" / "diffusion_pytorch_model.safetensors").write_bytes(b"x")
+            (ckpt / "scragvae" / "config.json").write_text("{}", encoding="utf-8")
             self.assertTrue(self.mod.check_vae_exists("scragvae", ckpt))
 
     def test_unknown_variant_returns_false(self):
@@ -324,11 +338,12 @@ class TestEnsureVaeModelAbsolutePath(unittest.TestCase):
         cls.mod = _load_module()
 
     def test_absolute_path_with_weights_returns_success(self):
-        """A pre-populated absolute VAE path should be reported as available."""
+        """A complete absolute VAE path should be reported as available."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             vae_dir = Path(tmp_dir) / "my-vae"
             vae_dir.mkdir()
             (vae_dir / "diffusion_pytorch_model.safetensors").write_bytes(b"x")
+            (vae_dir / "config.json").write_text("{}", encoding="utf-8")
             ckpt_dir = Path(tmp_dir) / "checkpoints"
             ckpt_dir.mkdir()
             success, msg = self.mod.ensure_vae_model(str(vae_dir), ckpt_dir)

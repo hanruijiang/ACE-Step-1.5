@@ -3,7 +3,7 @@
 import gc
 import os
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import torch
 from loguru import logger
@@ -17,9 +17,6 @@ class GenerateMusicDecodeMixin:
     def _prepare_generate_music_decode_state(
         self,
         outputs: Dict[str, Any],
-        infer_steps_for_progress: int,
-        actual_batch_size: int,
-        audio_duration: Optional[float],
         latent_shift: float,
         latent_rescale: float,
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
@@ -27,9 +24,6 @@ class GenerateMusicDecodeMixin:
 
         Args:
             outputs: ``service_generate`` output payload containing target latents and timings.
-            infer_steps_for_progress: Effective diffusion step count for estimates.
-            actual_batch_size: Effective generation batch size.
-            audio_duration: Optional generation duration in seconds.
             latent_shift: Additive latent post-processing shift.
             latent_rescale: Multiplicative latent post-processing scale.
 
@@ -44,15 +38,6 @@ class GenerateMusicDecodeMixin:
         time_costs = outputs["time_costs"]
         time_costs["offload_time_cost"] = self.current_offload_cost
 
-        per_step = time_costs.get("diffusion_per_step_time_cost")
-        if isinstance(per_step, (int, float)) and per_step > 0:
-            self._last_diffusion_per_step_sec = float(per_step)
-            self._update_progress_estimate(
-                per_step_sec=float(per_step),
-                infer_steps=infer_steps_for_progress,
-                batch_size=actual_batch_size,
-                duration_sec=audio_duration if audio_duration and audio_duration > 0 else None,
-            )
 
         if self.debug_stats:
             logger.debug(
@@ -72,11 +57,10 @@ class GenerateMusicDecodeMixin:
                 f"(shape={list(pred_latents.shape)}, dtype={pred_latents.dtype}, "
                 f"device={pred_latents.device}, nan={nan_count}, inf={inf_count}).",
                 "Common causes and fixes:",
-                "  1. LoRA/adapter trained on an older model version — retrain or update the adapter.",
-                "  2. Checkpoint/config mismatch — verify model checkpoints match this release.",
-                "  3. Unsupported quantization/backend — try running with --backend pt.",
-                "  4. CPU offload left parameters on wrong device — restart and regenerate.",
-                "  5. Float16 overflow on pre-Ampere GPU — set ACESTEP_DTYPE=float32.",
+                "  1. Checkpoint/config mismatch — verify model checkpoints match this release.",
+                "  2. Unsupported quantization/backend — try running with --backend pt.",
+                "  3. CPU offload left parameters on wrong device — restart and regenerate.",
+                "  4. Float16 overflow on pre-Ampere GPU — set ACESTEP_DTYPE=float32.",
             ]
             raise RuntimeError("\n".join(hints))
         if pred_latents.numel() > 0 and pred_latents.abs().sum() == 0:
@@ -138,49 +122,37 @@ class GenerateMusicDecodeMixin:
                     f"allocated={self._memory_allocated()/1024**3:.2f}GB, "
                     f"max={self._max_memory_allocated()/1024**3:.2f}GB"
                 )
-                using_mlx_vae = self.use_mlx_vae and self.mlx_vae is not None
                 vae_cpu = False
                 vae_device = None
-                if not using_mlx_vae:
-                    vae_cpu = os.environ.get("ACESTEP_VAE_ON_CPU", "0").lower() in ("1", "true", "yes")
-                    if not vae_cpu:
-                        if self.device == "mps":
-                            logger.info(
-                                "[generate_music] MPS device: skipping VRAM check "
-                                "(unified memory), keeping VAE on MPS"
+                vae_cpu = os.environ.get("ACESTEP_VAE_ON_CPU", "0").lower() in ("1", "true", "yes")
+                if not vae_cpu:
+                    if self.device == "mps":
+                        logger.info(
+                            "[generate_music] MPS device: skipping VRAM check "
+                            "(unified memory), keeping VAE on MPS"
+                        )
+                    else:
+                        effective_free = get_effective_free_vram_gb()
+                        logger.info(
+                            "[generate_music] Effective free VRAM before VAE decode: "
+                            f"{effective_free:.2f} GB"
+                        )
+                        if effective_free < 0.5:
+                            logger.warning(
+                                "[generate_music] Only "
+                                f"{effective_free:.2f} GB free VRAM; auto-enabling CPU VAE decode"
                             )
-                        else:
-                            effective_free = get_effective_free_vram_gb()
-                            logger.info(
-                                "[generate_music] Effective free VRAM before VAE decode: "
-                                f"{effective_free:.2f} GB"
-                            )
-                            if effective_free < 0.5:
-                                logger.warning(
-                                    "[generate_music] Only "
-                                    f"{effective_free:.2f} GB free VRAM; auto-enabling CPU VAE decode"
-                                )
-                                vae_cpu = True
-                    if vae_cpu:
-                        logger.info("[generate_music] Moving VAE to CPU for decode (ACESTEP_VAE_ON_CPU=1)...")
-                        vae_device = next(self.vae.parameters()).device
-                        self.vae = self.vae.cpu()
-                        pred_latents_for_decode = pred_latents_for_decode.cpu()
-                        self._empty_cache()
+                            vae_cpu = True
+                if vae_cpu:
+                    logger.info("[generate_music] Moving VAE to CPU for decode (ACESTEP_VAE_ON_CPU=1)...")
+                    vae_device = next(self.vae.parameters()).device
+                    self.vae = self.vae.cpu()
+                    pred_latents_for_decode = pred_latents_for_decode.cpu()
+                    self._empty_cache()
                 try:
                     if use_tiled_decode:
                         logger.info("[generate_music] Using tiled VAE decode to reduce VRAM usage...")
                         pred_wavs = self.tiled_decode(pred_latents_for_decode)
-                    elif using_mlx_vae:
-                        try:
-                            pred_wavs = self._mlx_vae_decode(pred_latents_for_decode)
-                        except Exception as exc:
-                            logger.warning(
-                                f"[generate_music] MLX direct decode failed ({exc}), falling back to PyTorch"
-                            )
-                            decoder_output = self.vae.decode(pred_latents_for_decode)
-                            pred_wavs = decoder_output.sample
-                            del decoder_output
                     else:
                         decoder_output = self.vae.decode(pred_latents_for_decode)
                         pred_wavs = decoder_output.sample

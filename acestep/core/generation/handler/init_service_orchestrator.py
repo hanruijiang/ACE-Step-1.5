@@ -17,11 +17,6 @@ _ROCM_DTYPE_MAP = {
 }
 
 
-def _cuda_supports_bfloat16() -> bool:
-    """Return whether the active CUDA device supports native bfloat16 kernels."""
-    return gpu_config.cuda_supports_bfloat16()
-
-
 def _resolve_rocm_dtype() -> torch.dtype:
     """Return a safe model dtype for ROCm/HIP devices.
 
@@ -50,14 +45,12 @@ class InitServiceOrchestratorMixin:
         project_root: str,
         config_path: str,
         device: str = "auto",
-        use_flash_attention: bool = False,
         compile_model: bool = False,
         offload_to_cpu: bool = False,
         offload_dit_to_cpu: bool = False,
         quantization: Optional[str] = None,
-        prefer_source: Optional[str] = None,
-        use_mlx_dit: bool = True,
         vae_checkpoint: Optional[str] = None,
+        checkpoint_dir: Optional[str] = None,
     ) -> Tuple[str, bool]:
         """Initialize model artifacts and runtime backends for generation.
 
@@ -76,7 +69,7 @@ class InitServiceOrchestratorMixin:
             self.offload_to_cpu = offload_to_cpu
             self.offload_dit_to_cpu = offload_dit_to_cpu
 
-            normalized_compile, normalized_quantization, mlx_compile_requested = self._configure_initialize_runtime(
+            normalized_compile, normalized_quantization = self._configure_initialize_runtime(
                 device=resolved_device,
                 compile_model=compile_model,
                 quantization=quantization,
@@ -119,13 +112,9 @@ class InitServiceOrchestratorMixin:
                 DEFAULT_VAE_VARIANT,
                 get_checkpoints_dir,
             )
-            env_ckpt = os.environ.get("ACESTEP_CHECKPOINTS_DIR")
-            if env_ckpt:
-                checkpoint_dir = str(get_checkpoints_dir())
-            elif project_root:
-                checkpoint_dir = os.path.join(project_root, "checkpoints")
-            else:
-                checkpoint_dir = str(get_checkpoints_dir())
+            checkpoint_dir = str(get_checkpoints_dir(checkpoint_dir, project_root=project_root))
+            self.checkpoint_dir = checkpoint_dir
+            self.project_root = project_root
             checkpoint_path = Path(checkpoint_dir)
 
             # Resolve VAE selection: explicit param > env var > default.
@@ -138,7 +127,6 @@ class InitServiceOrchestratorMixin:
             precheck_failure = self._ensure_models_present(
                 checkpoint_path=checkpoint_path,
                 config_path=config_path,
-                prefer_source=prefer_source,
                 vae_variant=resolved_vae_variant,
             )
             if precheck_failure is not None:
@@ -156,7 +144,6 @@ class InitServiceOrchestratorMixin:
             self._load_main_model_from_checkpoint(
                 model_checkpoint_path=model_path,
                 device=resolved_device,
-                use_flash_attention=use_flash_attention,
                 compile_model=normalized_compile,
                 quantization=self.quantization,
             )
@@ -171,12 +158,6 @@ class InitServiceOrchestratorMixin:
                 device=resolved_device,
             )
 
-            mlx_dit_status, mlx_vae_status = self._initialize_mlx_backends(
-                device=resolved_device,
-                use_mlx_dit=use_mlx_dit,
-                mlx_compile_requested=mlx_compile_requested,
-            )
-
             status_msg = self._build_initialize_status_message(
                 device=resolved_device,
                 model_path=model_path,
@@ -185,25 +166,20 @@ class InitServiceOrchestratorMixin:
                 dtype=self.dtype,
                 attention=getattr(self.config, "_attn_implementation", "eager"),
                 compile_model=normalized_compile,
-                mlx_compile_requested=mlx_compile_requested,
                 offload_to_cpu=offload_to_cpu,
                 offload_dit_to_cpu=offload_dit_to_cpu,
                 quantization=self.quantization,
-                mlx_dit_status=mlx_dit_status,
-                mlx_vae_status=mlx_vae_status,
             )
 
             self.last_init_params = {
                 "project_root": project_root,
+                "checkpoint_dir": checkpoint_dir,
                 "config_path": config_path,
                 "device": resolved_device,
-                "use_flash_attention": use_flash_attention,
                 "compile_model": normalized_compile,
                 "offload_to_cpu": offload_to_cpu,
                 "offload_dit_to_cpu": offload_dit_to_cpu,
                 "quantization": self.quantization,
-                "use_mlx_dit": use_mlx_dit,
-                "prefer_source": prefer_source,
                 "vae_checkpoint": resolved_vae_variant,
             }
 

@@ -52,8 +52,6 @@ class _DecodeHost(VaeDecodeMixin):
 
     def __init__(self):
         """Initialize deterministic decode host state."""
-        self.use_mlx_vae = False
-        self.mlx_vae = None
         self.device = "mps"
         self.disable_tqdm = True
         self.recorded = {}
@@ -78,12 +76,6 @@ class _DecodeHost(VaeDecodeMixin):
         """Return fallback tensor for failure-path assertions."""
         _ = latents
         return torch.full((1, 2, 8), 2.0)
-
-    def _mlx_vae_decode(self, latents):
-        """Return MLX sentinel tensor for MLX path assertions."""
-        _ = latents
-        return torch.full((1, 2, 6), 3.0)
-
 
 class _ChunksHost(VaeDecodeChunksMixin):
     """Host stub for testing chunk decode implementations."""

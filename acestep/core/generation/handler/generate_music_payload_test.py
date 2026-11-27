@@ -129,9 +129,9 @@ class GenerateMusicPayloadMixinTests(unittest.TestCase):
         self.assertIsNone(payload["error"])
         self.assertEqual(payload["status_message"], "Generation completed successfully!")
         self.assertEqual(payload["extra_outputs"]["spans"], [])
-        self.assertIsNone(payload["extra_outputs"]["encoder_hidden_states"])
-        self.assertIsNone(payload["extra_outputs"]["encoder_attention_mask"])
-        self.assertIsNone(payload["extra_outputs"]["context_latents"])
+        self.assertNotIn("encoder_hidden_states", payload["extra_outputs"])
+        self.assertNotIn("encoder_attention_mask", payload["extra_outputs"])
+        self.assertNotIn("context_latents", payload["extra_outputs"])
         self.assertEqual(payload["extra_outputs"]["pred_latents"].device.type, "cpu")
 
 

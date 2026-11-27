@@ -37,9 +37,6 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
         target_device = str(getattr(self, "device", ""))
         if not target_device.startswith("cuda"):
             return
-        if self._cuda_supports_bool_argsort():
-            return
-
         model_module_name = getattr(self.model.__class__, "__module__", "")
         if not model_module_name:
             return
@@ -54,7 +51,9 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
             return
 
         original_pack_sequences = getattr(model_module, "pack_sequences", None)
-        if original_pack_sequences is None:
+        if original_pack_sequences is None or original_pack_sequences.__module__ == "acestep.models.common.modeling_layers":
+            return
+        if self._cuda_supports_bool_argsort():
             return
         if getattr(original_pack_sequences, "__acestep_bool_argsort_patched__", False):
             return
@@ -117,7 +116,6 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
         *,
         model_checkpoint_path: str,
         device: str,
-        use_flash_attention: bool,
         compile_model: bool,
         quantization: Optional[str],
     ) -> str:
@@ -141,24 +139,14 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
                     exc,
                 )
 
-        if use_flash_attention and self.is_flash_attention_available(device):
-            attn_implementation = "flash_attention_2"
-        elif device == "cuda" and not gpu_config.cuda_supports_bfloat16():
-            # Pre-Ampere GPUs (compute capability < 8.0) run in float16 which
-            # can overflow in SDPA's fused softmax with longer sequences,
-            # producing NaN/Inf latents (see issues #924, #927).  Eager
-            # attention upcasts to float32 for softmax, avoiding the overflow.
+        if device == "cuda" and not gpu_config.cuda_supports_bfloat16():
+            # Use eager attention for FP16 numerical stability.
             logger.info(
                 "[initialize_service] Pre-Ampere CUDA detected: using eager "
                 "attention for float16 numerical stability."
             )
             attn_implementation = "eager"
         else:
-            if use_flash_attention:
-                logger.warning(
-                    f"[initialize_service] Flash attention requested but unavailable for device={device}. "
-                    "Falling back to SDPA."
-                )
             attn_implementation = "sdpa"
 
         attn_candidates = [attn_implementation]
@@ -191,7 +179,6 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
 
         self.model.config._attn_implementation = attn_implementation
         self.config = self.model.config
-        self._sync_alignment_config()
         self._apply_cuda_bool_argsort_workaround()
 
         if not self.offload_to_cpu:

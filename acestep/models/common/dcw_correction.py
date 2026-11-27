@@ -24,8 +24,7 @@ crashing the pipeline.
 This file holds the :class:`DCWCorrector` wrapper that the sampler loop
 calls each step.  The wavelet primitives live in
 :mod:`acestep.models.common.dcw_primitives` and the lazy ``pytorch_wavelets``
-loader lives in :mod:`acestep.models.common.dcw_loader` (split out per
-the project's 200-LOC module cap).
+loader lives in :mod:`acestep.models.common.dcw_loader`.
 
 Usage inside a sampler step::
 

@@ -4,10 +4,9 @@ The Custom / text2music mode operates exclusively on LM-generated audio codes
 or user-provided LM Codes Hints.  Source audio uploaded in Remix / Repaint
 modes must not leak into text2music generation.
 
-Tests cover three defence layers:
-1. ``generate_with_progress`` (Gradio UI layer) — clears src_audio.
-2. ``generate_music`` (inference orchestrator) — passes None to handler.
-3. ``handler.generate_music`` (backend) — skips src_audio processing.
+Tests cover two defence layers:
+1. ``generate_music`` (inference orchestrator) — passes None to handler.
+2. ``handler.generate_music`` (backend) — skips src_audio processing.
 """
 
 import unittest
@@ -153,31 +152,6 @@ class TestHandlerLayerSrcAudioGuard(unittest.TestCase):
             result, called = self._simulate_handler_src_audio_logic(task, None)
             self.assertIsNone(result, f"Expected None for task={task}")
             self.assertFalse(called, f"Expected no processing for task={task}")
-
-
-class TestGenerateWithProgressSrcAudioClear(unittest.TestCase):
-    """Verify the UI-layer guard in generate_with_progress."""
-
-    def test_text2music_clears_src_audio_before_params(self):
-        """The local variable should be set to None for text2music."""
-        # Simulate the guard logic from generate_with_progress
-        task_type = "text2music"
-        src_audio = "/tmp/stale_from_remix.wav"
-
-        if task_type == "text2music":
-            src_audio = None
-
-        self.assertIsNone(src_audio)
-
-    def test_cover_preserves_src_audio(self):
-        """Non-text2music tasks should not clear src_audio."""
-        task_type = "cover"
-        src_audio = "/tmp/cover_source.wav"
-
-        if task_type == "text2music":
-            src_audio = None
-
-        self.assertEqual(src_audio, "/tmp/cover_source.wav")
 
 
 if __name__ == "__main__":

@@ -1,14 +1,27 @@
 """Catalog and capability helpers for initialization flow."""
 
 import os
-from typing import List, Optional
-
-import torch
-from loguru import logger
+from typing import List
 
 
 class InitServiceCatalogMixin:
     """Checkpoint discovery and backend capability helpers."""
+
+    def _get_project_root(self) -> str:
+        """Get project root directory path.
+
+        Returns the directory set by the ``ACESTEP_PROJECT_ROOT`` environment
+        variable when present, otherwise the current working directory.  Using
+        the working directory (rather than ``__file__``) keeps generated cache
+        files and the checkpoints folder next to where the user launched the
+        process, regardless of whether the package was installed via
+        ``pip install .`` or run from source.
+        """
+        from acestep.model_downloader import get_project_root
+        root = getattr(self, "project_root", None)
+        if root:
+            return os.path.abspath(os.path.expanduser(root))
+        return str(get_project_root())
 
     def _device_type(self) -> str:
         """Normalize the host device value to a backend type string."""
@@ -18,18 +31,8 @@ class InitServiceCatalogMixin:
 
     def _resolve_checkpoint_dir(self) -> str:
         """Return the checkpoints directory, respecting ACESTEP_CHECKPOINTS_DIR."""
-        env_dir = os.environ.get("ACESTEP_CHECKPOINTS_DIR")
-        if env_dir:
-            from acestep.model_downloader import get_checkpoints_dir
-            return str(get_checkpoints_dir())
-        return os.path.join(self._get_project_root(), "checkpoints")
-
-    def get_available_checkpoints(self) -> List[str]:
-        """Return available checkpoint directory paths under the project root."""
-        checkpoint_dir = self._resolve_checkpoint_dir()
-        if os.path.exists(checkpoint_dir):
-            return [checkpoint_dir]
-        return []
+        from acestep.model_downloader import get_checkpoints_dir
+        return str(get_checkpoints_dir(getattr(self, "checkpoint_dir", None), project_root=self._get_project_root()))
 
     def get_available_acestep_v15_models(self) -> List[str]:
         """Scan and return all model directory names starting with ``acestep-v15-``."""
@@ -44,33 +47,6 @@ class InitServiceCatalogMixin:
 
         models.sort()
         return models
-
-    def is_flash_attention_available(self, device: Optional[str] = None) -> bool:
-        """Check whether flash attention can be used on the target device."""
-        target_device = str(device or self.device or "auto").split(":", 1)[0]
-        if target_device == "auto":
-            if not torch.cuda.is_available():
-                return False
-        else:
-            if target_device != "cuda" or not torch.cuda.is_available():
-                return False
-
-        try:
-            major, _ = torch.cuda.get_device_capability()
-            if major < 8:
-                logger.info(
-                    f"[is_flash_attention_available] GPU compute capability {major}.x < 8.0 "
-                    f"(pre-Ampere) — FlashAttention not supported, will use SDPA instead."
-                )
-                return False
-        except Exception:
-            return False
-
-        try:
-            import flash_attn
-            return True
-        except ImportError:
-            return False
 
     def is_turbo_model(self) -> bool:
         """Check whether the currently loaded model is a turbo variant."""

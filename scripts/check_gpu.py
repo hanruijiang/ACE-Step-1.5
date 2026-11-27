@@ -13,13 +13,10 @@ Usage:
 """
 
 import os
-import sys
 import subprocess
 
 # Constants
 HEADER_WIDTH = 80
-PYTORCH_CUDA_INSTALL_URL = "https://download.pytorch.org/whl/cu121"
-PYTORCH_ROCM_INSTALL_URL = "https://download.pytorch.org/whl/rocm6.0"
 
 
 def print_section(title):
@@ -45,22 +42,26 @@ def check_pytorch():
             print(f"✓ Build type: ROCm (HIP {torch.version.hip})")
         elif is_cuda:
             print(f"✓ Build type: CUDA {torch.version.cuda}")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            print("✓ Build type: Apple MPS")
+        elif hasattr(torch, "xpu") and torch.xpu.is_available():
+            print("✓ Build type: Intel XPU")
         else:
             print("⚠️ Build type: CPU-only")
-            print("\n❌ You have installed a CPU-only version of PyTorch!")
+            print("\nCPU inference is supported; GPU acceleration requires a matching build.")
             print("\nTo enable GPU support:")
             print("  For NVIDIA GPUs:")
-            print(f"    pip install torch --index-url {PYTORCH_CUDA_INSTALL_URL}")
+            print("    Follow README.md and requirements.txt for your CUDA platform.")
             print("\n  For AMD GPUs with ROCm:")
             print("    Windows: See requirements-rocm.txt")
-            print(f"    Linux: pip install torch --index-url {PYTORCH_ROCM_INSTALL_URL}")
+            print("    Linux: See requirements-rocm-linux.txt and README.md.")
             return False
         
         return True
     except ImportError:
         print("❌ PyTorch not installed")
         print("\nPlease install PyTorch first:")
-        print("  pip install torch")
+        print("  Follow README.md and the matching requirements file.")
         return False
 
 
@@ -73,6 +74,13 @@ def check_cuda_availability():
         
         is_available = torch.cuda.is_available()
         print(f"torch.cuda.is_available(): {is_available}")
+        if not is_available:
+            if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                print("✓ Apple MPS available")
+                return True
+            if hasattr(torch, "xpu") and torch.xpu.is_available():
+                print("✓ Intel XPU available")
+                return True
         
         if is_available:
             print(f"✓ GPU detected!")
@@ -199,8 +207,6 @@ def check_ace_step_env():
         'MAX_CUDA_VRAM',
         'HSA_OVERRIDE_GFX_VERSION',
         'MIOPEN_FIND_MODE',
-        'TORCH_COMPILE_BACKEND',
-        'ACESTEP_LM_BACKEND',
     ]
     
     found_any = False
@@ -225,7 +231,8 @@ def print_recommendations():
         is_cuda = hasattr(torch.version, 'cuda') and torch.version.cuda is not None
         is_available = torch.cuda.is_available()
         
-        if is_available:
+        if (is_available or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+                or (hasattr(torch, "xpu") and torch.xpu.is_available())):
             print("✓ Your GPU setup appears to be working correctly!")
             print("\nYou can now run ACE-Step with GPU acceleration.")
         elif is_rocm:
@@ -234,8 +241,8 @@ def print_recommendations():
             print("  1. Set HSA_OVERRIDE_GFX_VERSION for your GPU model (see above)")
             print("  2. Verify ROCm installation with: rocm-smi")
             print("  3. Check that your GPU is supported by your ROCm version")
-            print("  4. On Windows: Use start_gradio_ui_rocm.bat which sets all required variables")
-            print("  5. On Linux: See docs/en/ACE-Step1.5-Rocm-Manual-Linux.md")
+            print("  4. On Windows: Follow requirements-rocm.txt and README.md")
+            print("  5. On Linux: Follow requirements-rocm-linux.txt and README.md")
             print("\nFor RX 9070 XT specifically:")
             print("  export HSA_OVERRIDE_GFX_VERSION=11.0.0")
             print("  or on Windows: set HSA_OVERRIDE_GFX_VERSION=11.0.0")
@@ -246,14 +253,14 @@ def print_recommendations():
             print("  2. Verify installation with: nvidia-smi")
             print("  3. Ensure CUDA version compatibility between driver and PyTorch")
         else:
-            print("❌ CPU-only PyTorch build detected")
+            print("No supported GPU is available; CPU inference remains possible.")
             print("\nYou need to reinstall PyTorch with GPU support:")
             print("\nFor NVIDIA GPUs:")
-            print("  pip uninstall torch torchvision torchaudio")
-            print(f"  pip install torch torchvision torchaudio --index-url {PYTORCH_CUDA_INSTALL_URL}")
+            print("  pip uninstall torch torchaudio")
+            print("  Follow README.md and requirements.txt for your CUDA platform.")
             print("\nFor AMD GPUs:")
             print("  Windows: Follow instructions in requirements-rocm.txt")
-            print(f"  Linux: pip install torch --index-url {PYTORCH_ROCM_INSTALL_URL}")
+            print("  Linux: See requirements-rocm-linux.txt and README.md.")
             
     except ImportError:
         print("❌ PyTorch not installed")

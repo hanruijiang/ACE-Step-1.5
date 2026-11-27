@@ -24,8 +24,6 @@ class CoverNoiseStrengthForwardingTests(unittest.TestCase):
         handler.config = types.SimpleNamespace(is_turbo=False)
         handler.device = "cpu"
         handler.dtype = torch.float32
-        handler.use_mlx_dit = False
-        handler.mlx_decoder = None
         handler.silence_latent = torch.zeros(1, 16, 4, dtype=torch.float32)
 
         handler._normalize_instructions = lambda instructions, _batch, _default: instructions

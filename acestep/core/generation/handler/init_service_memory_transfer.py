@@ -40,15 +40,13 @@ class InitServiceMemoryTransferMixin:
             if buf is not None and not self._is_on_target_device(buf, target_device):
                 module._buffers[buf_name] = buf.to(target_device)
 
-        # Traverse registered submodules (covers standard PyTorch modules
-        # and PEFT-registered LoRA layers).
+        # Traverse registered submodules.
         for _, child in module._modules.items():
             if child is not None:
                 self._move_module_recursive(child, target_device, dtype, visited)
 
         # Safety net: scan instance __dict__ for Module instances stored as
         # plain object attributes (not via add_module / __setattr__).
-        # PEFT and LyCORIS may store adapter references this way.
         # Uses vars() instead of dir() to avoid inherited methods/properties.
         for attr_name, attr in vars(module).items():
             if attr_name.startswith("_"):
@@ -74,8 +72,7 @@ class InitServiceMemoryTransferMixin:
         ``NotImplementedError`` (e.g. for torchao quantized tensors).
 
         Always performs a recursive sweep afterwards to catch parameters
-        that ``model.to()`` may miss — notably PEFT/LoRA adapter weights
-        stored as plain attributes or in non-standard module hierarchies.
+        that ``model.to()`` may miss in non-standard module hierarchies.
         """
         target_device = torch.device(device) if isinstance(device, str) else device
 
@@ -92,11 +89,8 @@ class InitServiceMemoryTransferMixin:
                 "(AffineQuantizedTensor on older torch). Moving parameters individually."
             )
 
-        # Always run recursive sweep as a safety net.  This catches PEFT/LoRA
-        # adapter weights and any other parameters that model.to() missed.
-        # The sweep is cheap (no-ops for already-correct params) and critical
-        # for CPU-offload workflows with LoRA adapters.  On the
-        # NotImplementedError path this is the only device-transfer mechanism.
+        # Always run a recursive sweep as a safety net for parameters missed
+        # by model.to(), including CPU-offload and quantized tensor paths.
         try:
             self._move_module_recursive(model, target_device, dtype)
         except NotImplementedError:

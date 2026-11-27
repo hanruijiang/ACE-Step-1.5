@@ -1,18 +1,14 @@
 """
-ACE-Step Inference API Module
+ACE-Step inference runtime.
 
-This module provides a standardized inference interface for music generation,
-designed for third-party integration. It offers both a simplified API and
-backward-compatible Gradio UI support.
+Shared music generation and audio editing functions used by the CLI.
 """
 
-import glob
 import inspect
 import json
 import math
 import os
 import random
-import tempfile
 from typing import Optional, Union, List, Dict, Any, Tuple
 from dataclasses import dataclass, field, asdict
 from loguru import logger
@@ -20,11 +16,7 @@ import numpy as np
 import torch
 
 
-from acestep.audio_utils import AudioSaver, apply_fade, generate_uuid_from_params, normalize_audio, get_lora_weights_hash
-from acestep.constants import BPM_MIN, BPM_MAX, DURATION_MAX, TASK_TYPES, VALID_TIME_SIGNATURES
-
-# HuggingFace Space environment detection
-IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
+from acestep.audio_utils import AudioSaver, apply_fade, generate_uuid_from_params, normalize_audio
 
 # Task types conditioned directly on reference/source audio rather than on
 # LM-generated audio codes.  Two decisions must stay in lockstep for these:
@@ -36,21 +28,6 @@ IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
 DIRECT_CONDITIONING_TASKS = frozenset(
     {"cover", "cover-nofsq", "repaint", "extract", "complete", "lego"}
 )
-
-def _get_spaces_gpu_decorator(duration=180):
-    """
-    Get the @spaces.GPU decorator if running in HuggingFace Space environment.
-    Returns identity decorator if not in Space environment.
-    """
-    if IS_HUGGINGFACE_SPACE:
-        try:
-            import spaces
-            return spaces.GPU(duration=duration)
-        except ImportError:
-            logger.warning("spaces package not found, GPU decorator disabled")
-            return lambda func: func
-    return lambda func: func
-
 
 @dataclass
 class GenerationParams:
@@ -157,10 +134,6 @@ class GenerationParams:
     # Resolved after the loaded model configuration is available: enabled for
     # Turbo and disabled for non-Turbo models unless explicitly overridden.
     dcw_enabled: Optional[bool] = None
-    # Defaults tuned by grid search on the pure-DiT path; "double" with
-    # low_scaler=0.05 and high_scaler=0.02 was the top configuration.  In
-    # LLM-think mode DCW's gain is small and these defaults still sit near
-    # the think-mode optimum band, so we keep a single global default.
     dcw_mode: str = "double"        # "low" | "high" | "double" | "pix"
     dcw_scaler: float = 0.05        # low-band scaler (or single scaler for "high"/"pix")
     dcw_high_scaler: float = 0.02   # high-band scaler (used only in "double" mode)
@@ -176,11 +149,11 @@ class GenerationParams:
     repaint_wav_crossfade_sec: float = 0.0  # waveform-level splice crossfade (seconds, 0=hard cut)
     repaint_mode: str = "balanced"  # "conservative", "balanced", or "aggressive"
     repaint_strength: float = 0.5  # 0.0=aggressive, 1.0=conservative (balanced mode only)
-    # Retake (issue #1155): variance-preserving noise mixing for variation generation.
+    # Retake: variance-preserving noise mixing for variation generation.
     # retake_variance=0 is a no-op; the retake_seed is only consumed when variance>0.
     retake_seed: Optional[Union[str, int]] = None
     retake_variance: float = 0.0
-    # Flow-edit overlay (issue #1156): when True on a cover/cover-nofsq
+    # Flow-edit overlay: when True on a cover/cover-nofsq
     # task, paint the source audio toward the user's caption/lyrics by
     # integrating V_delta = V_tar(caption, lyrics) - V_src(source_caption,
     # source_lyrics) over [n_min, n_max].  The overlay layers on top of
@@ -188,8 +161,7 @@ class GenerationParams:
     # type.  ``flow_edit_source_caption`` / ``flow_edit_source_lyrics``
     # describe the *original* audio (what V_src is conditioned on);
     # ``caption`` / ``lyrics`` are the *target* (what V_tar morphs toward).
-    # v1 disables DCW / heun / ADG inside the loop; see #1156 for the
-    # follow-up plan.
+    # FlowEdit uses Euler sampling without DCW or ADG.
     flow_edit_morph: bool = False
     flow_edit_source_caption: str = ""
     flow_edit_source_lyrics: str = ""
@@ -239,7 +211,6 @@ class GenerationConfig:
     
     Attributes:
         batch_size: Number of audio samples to generate
-        allow_lm_batch: Whether to allow batch processing in LM
         use_random_seed: Whether to use random seed
         seeds: Seed(s) for batch generation. Can be:
             - None: Use random seeds (when use_random_seed=True) or params.seed (when use_random_seed=False)
@@ -252,7 +223,6 @@ class GenerationConfig:
         mp3_sample_rate: MP3 output sample rate used when audio_format="mp3". Default: 48000
     """
     batch_size: int = 2
-    allow_lm_batch: bool = False
     use_random_seed: bool = True
     seeds: Optional[List[int]] = None
     lm_batch_chunk_size: int = 8
@@ -294,44 +264,6 @@ class GenerationResult:
     status_message: str = ""
     extra_outputs: Dict[str, Any] = field(default_factory=dict)
     # Success Status
-    success: bool = True
-    error: Optional[str] = None
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert result to dictionary for JSON serialization."""
-        return asdict(self)
-
-
-@dataclass
-class UnderstandResult:
-    """Result of music understanding from audio codes.
-    
-    Attributes:
-        # Metadata Fields
-        caption: Generated caption describing the music
-        lyrics: Generated or extracted lyrics
-        bpm: Beats per minute (None if not detected)
-        duration: Duration in seconds (None if not detected)
-        keyscale: Musical key (e.g., "C Major")
-        language: Vocal language code (e.g., "en", "zh")
-        timesignature: Time signature (e.g., "4/4")
-        
-        # Status
-        status_message: Status message from understanding
-        success: Whether understanding completed successfully
-        error: Error message if understanding failed
-    """
-    # Metadata Fields
-    caption: str = ""
-    lyrics: str = ""
-    bpm: Optional[int] = None
-    duration: Optional[float] = None
-    keyscale: str = ""
-    language: str = ""
-    timesignature: str = ""
-    
-    # Status
-    status_message: str = ""
     success: bool = True
     error: Optional[str] = None
 
@@ -391,13 +323,6 @@ def _candidate_repaint_sidecars(src_audio: str) -> List[str]:
     """Return possible generated sidecar paths for a repaint source audio path."""
     expanded_audio = os.path.expanduser(src_audio)
     candidates = [os.path.splitext(expanded_audio)[0] + ".json"]
-    basename = os.path.splitext(os.path.basename(expanded_audio))[0]
-    if basename:
-        results_root = os.path.join(os.getcwd(), "gradio_outputs")
-        sidecars = glob.glob(
-            os.path.join(results_root, "batch_*", f"{glob.escape(basename)}.json")
-        )
-        candidates.extend(sorted(sidecars, key=os.path.getmtime, reverse=True))
     seen = set()
     unique_candidates = []
     for candidate in candidates:
@@ -452,7 +377,7 @@ def _resample_matching_source_seeds(
 def _load_cached_repaint_source(src_audio: Optional[str]) -> Optional[CachedRepaintSource]:
     """Load cached repaint source state from a generated audio sidecar.
 
-    The cache is an optimization for ACE-generated Gradio outputs. Missing or
+    The cache is an optimization for ACE-generated CLI outputs. Missing or
     malformed sidecars return ``None`` so uploaded audio keeps the normal
     repaint path.
     """
@@ -504,13 +429,6 @@ def _load_cached_repaint_source(src_audio: Optional[str]) -> Optional[CachedRepa
     )
 
 
-def _load_cached_repaint_source_latents(src_audio: Optional[str]) -> Optional[torch.Tensor]:
-    """Load cached repaint source latents from a generated audio sidecar."""
-    cached_source = _load_cached_repaint_source(src_audio)
-    return cached_source.latents if cached_source is not None else None
-
-
-@_get_spaces_gpu_decorator(duration=180)
 def generate_music(
     dit_handler,
     llm_handler,
@@ -518,6 +436,7 @@ def generate_music(
     config: GenerationConfig,
     save_dir: Optional[str] = None,
     progress=None,
+    prompt_editor=None,
 ) -> GenerationResult:
     """Generate music using ACE-Step model with optional LM reasoning.
     
@@ -532,15 +451,7 @@ def generate_music(
     """
     try:
         # Phase 1: LM-based metadata and code generation (if enabled)
-        # Flow-edit overlay on text2music must use the *VAE encoding* of
-        # ``src_audio`` as the V_delta integration's starting latent, not
-        # codes-decoded latents.  ``conditioning_target._prepare_target_latents_and_wavs``
-        # otherwise replaces target_wavs with zeros and drops in
-        # ``_decode_audio_codes_to_latents(codes)`` whose output sits at a
-        # different distribution than the VAE encoder produces — zt_edit
-        # starts OOD and the integration collapses to a near-silent latent
-        # (peak ~0.007 in the user's repro).  Drop the codes here so the
-        # downstream pipeline VAE-encodes the user's mp3 cleanly.
+        # FlowEdit uses VAE-encoded source audio rather than LM audio codes.
         if params.task_type == "text2music" and params.flow_edit_morph:
             audio_code_string_to_use = ""
         else:
@@ -584,62 +495,26 @@ def generate_music(
         # Determine actual batch size for chunk processing
         actual_batch_size = config.batch_size if config.batch_size is not None else 1
 
-        # Prepare seeds for batch generation
-        # Use config.seed if provided, otherwise fallback to params.seed
-        # Convert config.seed (None, int, or List[int]) to format that prepare_seeds accepts
-        seed_for_generation = ""
-        # Original code (commented out because it crashes on int seeds):
-        # if config.seeds is not None and len(config.seeds) > 0:
-        #     if isinstance(config.seeds, list):
-        #         # Convert List[int] to comma-separated string
-        #         seed_for_generation = ",".join(str(s) for s in config.seeds)
-
-        if config.seeds is not None:
-            if isinstance(config.seeds, list) and len(config.seeds) > 0:
-                # Convert List[int] to comma-separated string
-                seed_for_generation = ",".join(str(s) for s in config.seeds)
-            elif isinstance(config.seeds, int):
-                # Fix: Explicitly handle single integer seeds by converting to string.
-                # Previously, this would crash because 'len()' was called on an int.
-                seed_for_generation = str(config.seeds)
-        elif params.seed is not None and params.seed != -1:
-            # config.seeds (plural) is unset - fall back to params.seed (singular),
-            # matching the comment above. Without this, a bare `seed = 42` in a TOML
-            # config was silently dropped: only `seeds = [42]` had any effect.
-            seed_for_generation = str(params.seed)
-
-        # Use dit_handler.prepare_seeds to handle seed list generation and padding
-        # This will handle all the logic: padding with random seeds if needed, etc.
-        actual_seed_list, _ = dit_handler.prepare_seeds(actual_batch_size, seed_for_generation, config.use_random_seed)
-        use_random_seed_for_dit = config.use_random_seed
+        # Resolve seeds once for the LM, DiT and output metadata.
+        if isinstance(config.seeds, list):
+            seed_input = ",".join(str(seed) for seed in config.seeds)
+        elif config.seeds is not None:
+            seed_input = str(config.seeds)
+        else:
+            seed_input = str(params.seed) if params.seed is not None else ""
+        actual_seed_list, _ = dit_handler.prepare_seeds(
+            actual_batch_size, seed_input, config.use_random_seed
+        )
         if cached_repaint_source is not None:
             actual_seed_list = _resample_matching_source_seeds(
-                actual_seed_list,
-                cached_repaint_source.source_seed,
+                actual_seed_list, cached_repaint_source.source_seed
             )
-            seed_for_generation = ",".join(str(seed) for seed in actual_seed_list)
-            use_random_seed_for_dit = False
+        seed_for_generation = ",".join(str(seed) for seed in actual_seed_list)
 
         # LM-based Chain-of-Thought reasoning
-        # Skip LM for the direct-conditioning tasks - these use reference/src audio
-        # directly and don't need LM to generate audio codes or metadata.
-        # For extract tasks, LLM-generated captions can conflict with the extract instruction
-        # and cause the DiT model to reconstruct input audio instead of extracting stems.
-        # complete/lego were previously NOT skipped, so with thinking=True the LM
-        # generated audio codes from text alone (no src_audio conditioning at the LM
-        # stage). Those codes then pre-empted real src_audio processing downstream in
-        # ``_prepare_reference_and_source_audio`` (the "Audio codes provided, ignoring
-        # src_audio" branch), so the DiT never saw the source audio.
+        # Direct-conditioning tasks use source audio without LM-generated codes.
         skip_lm_tasks = DIRECT_CONDITIONING_TASKS
-        # Flow-edit overlay on text2music must NOT trigger LM Phase 1.
-        # Even if Think is on, the LM-generated codes would be routed
-        # into ``conditioning_target`` which replaces target_wavs with
-        # zeros and uses ``_decode_audio_codes_to_latents(codes)`` for
-        # target_latents — flow-edit's ``zt_edit = src_latents.clone()``
-        # then starts at a codes-decoded latent (different distribution
-        # than VAE encode) and the V_delta integration collapses to a
-        # near-silent latent.  Treat morph-on-text2music like a skip
-        # task so Think / CoT both no-op.
+        # FlowEdit uses source audio conditioning.
         morph_on_text2music = (
             params.task_type == "text2music" and params.flow_edit_morph
         )
@@ -710,6 +585,7 @@ def generate_music(
 
             all_metadata_list = []
             all_audio_codes_list = []
+            prompt_edits = {}
 
             for chunk_idx in range(num_chunks):
                 chunk_start = chunk_idx * max_inference_batch_size
@@ -736,12 +612,13 @@ def generate_music(
                     user_metadata=user_metadata_to_pass,
                     use_cot_caption=params.use_cot_caption,
                     use_cot_language=params.use_cot_language,
-                    use_cot_metas=params.use_cot_metas,
+                    use_cot_metas=params.use_cot_metas and not (prompt_edits and chunk_idx > 0),
                     use_constrained_decoding=params.use_constrained_decoding,
                     constrained_decoding_debug=config.constrained_decoding_debug,
                     batch_size=chunk_size,
                     seeds=chunk_seeds,
                     progress=progress,
+                    **({"prompt_editor": prompt_editor} if prompt_editor else {}),
                 )
 
                 # Check if LM generation failed
@@ -771,6 +648,9 @@ def generate_music(
 
                 # Collect time costs from LM extra_outputs
                 lm_extra = result.get("extra_outputs", {})
+                if lm_extra.get("prompt_edits"):
+                    prompt_edits = lm_extra["prompt_edits"]
+                    user_metadata_to_pass = prompt_edits["metadata"]
                 lm_chunk_time_costs = lm_extra.get("time_costs", {})
                 if lm_chunk_time_costs:
                     # Accumulate time costs from all chunks
@@ -821,13 +701,38 @@ def generate_music(
                 if not params.lyrics:
                     params.cot_lyrics = lyrics
 
-            # set cot caption and language if needed
-            if params.use_cot_caption:
-                dit_input_caption = lm_generated_metadata.get("caption", dit_input_caption)
-            if params.use_cot_language:
-                dit_input_vocal_language = lm_generated_metadata.get("vocal_language", dit_input_vocal_language)
+            if lm_generated_metadata:
+                if params.use_cot_caption:
+                    dit_input_caption = lm_generated_metadata.get("caption", dit_input_caption)
+                if params.use_cot_language:
+                    dit_input_vocal_language = lm_generated_metadata.get(
+                        "language", lm_generated_metadata.get("vocal_language", dit_input_vocal_language)
+                    )
+                if not dit_input_lyrics:
+                    dit_input_lyrics = lm_generated_metadata.get("lyrics", dit_input_lyrics)
 
-        # Direct-conditioning tasks: no LM run, so conditioning must come from params (caption + lyrics from GUI).
+            # Explicit prompt edits take precedence over input metadata.
+            overrides = prompt_edits.get("overrides", {})
+            bpm = overrides.get("bpm", bpm)
+            key_scale = overrides.get("keyscale", key_scale)
+            time_signature = overrides.get("timesignature", time_signature)
+            audio_duration = overrides.get("duration", audio_duration)
+            dit_input_caption = overrides.get("caption", prompt_edits.get("caption", dit_input_caption))
+            dit_input_vocal_language = overrides.get(
+                "language", overrides.get("vocal_language", dit_input_vocal_language)
+            )
+            dit_input_lyrics = prompt_edits.get("lyrics", dit_input_lyrics)
+            params.instruction = prompt_edits.get("instruction", params.instruction)
+
+            params.bpm = bpm
+            params.keyscale = key_scale
+            params.timesignature = time_signature
+            params.duration = audio_duration
+            params.caption = dit_input_caption
+            params.vocal_language = dit_input_vocal_language
+            params.lyrics = dit_input_lyrics
+
+        # Direct-conditioning tasks use the supplied caption and lyrics.
         if params.task_type in DIRECT_CONDITIONING_TASKS:
             dit_input_caption = params.caption or dit_input_caption
             dit_input_lyrics = params.lyrics if params.lyrics is not None else dit_input_lyrics
@@ -841,7 +746,6 @@ def generate_music(
             audio_duration = None
 
         # Phase 2: DiT music generation
-        # Use seed_for_generation (from config.seed or params.seed) instead of params.seed for actual generation
         dit_generate_kwargs = {
             "captions": dit_input_caption,
             "global_caption": params.global_caption,
@@ -852,8 +756,8 @@ def generate_music(
             "vocal_language": dit_input_vocal_language,
             "inference_steps": params.inference_steps,
             "guidance_scale": params.guidance_scale,
-            "use_random_seed": use_random_seed_for_dit,
-            "seed": seed_for_generation,  # Use config.seed (or params.seed fallback) instead of params.seed directly
+            "use_random_seed": False,
+            "seed": seed_for_generation,
             "reference_audio": params.reference_audio,
             "audio_duration": audio_duration,
             "batch_size": config.batch_size if config.batch_size is not None else 1,
@@ -930,9 +834,8 @@ def generate_music(
         status_message = result.get("status_message", "")
         dit_extra_outputs = result.get("extra_outputs", {})
 
-        # Use the seed list already prepared above (from config.seed or params.seed fallback)
-        # actual_seed_list was computed earlier using dit_handler.prepare_seeds
-        seed_list = actual_seed_list
+        # The handler may reduce the batch size for available memory.
+        seed_list = actual_seed_list[:len(dit_audios)]
 
         # Get base params dictionary
         base_params_dict = params.to_dict()
@@ -981,11 +884,6 @@ def generate_music(
                 if lm_code and str(lm_code).strip():
                     audio_params["audio_codes"] = lm_code
 
-            # Add LoRA state to params for UUID generation (ensures different UUIDs when only LoRA state changes)
-            audio_params["lora_loaded"] = dit_handler.lora_loaded
-            audio_params["use_lora"] = dit_handler.use_lora
-            audio_params["lora_scale"] = dit_handler.lora_scale
-            audio_params["lora_weights_hash"] = get_lora_weights_hash(dit_handler)
             audio_params["audio_format"] = audio_format
             if audio_format == "mp3":
                 audio_params["mp3_bitrate"] = getattr(config, "mp3_bitrate", "128k")
@@ -1006,8 +904,6 @@ def generate_music(
                      peak_after = torch.max(torch.abs(audio_tensor)).item()
                      logger.info(f"[Normalization] Audio {idx} AFTER: Peak={peak_after:.4f}")
                      
-                     # Update the tensor in the dict so downstream uses the normalized version ??
-                     # Actually we use audio_tensor variable below, so it's fine.
                  except Exception as e:
                      logger.error(f"Normalization failed: {e}")
             # -------------------------------
@@ -1028,12 +924,6 @@ def generate_music(
             # --------------------------
 
             # Generate UUID for this audio (moved from handler)
-            batch_seed = seed_list[idx] if idx < len(seed_list) else seed_list[0] if seed_list else -1
-
-            audio_code_str = lm_generated_audio_codes_list[idx] if (
-                lm_generated_audio_codes_list and idx < len(lm_generated_audio_codes_list)) else audio_code_string_to_use
-            if isinstance(audio_code_str, list):
-                audio_code_str = audio_code_str[idx] if idx < len(audio_code_str) else ""
 
             audio_key = generate_uuid_from_params(audio_params)
 
@@ -1054,7 +944,7 @@ def generate_music(
                                                         mp3_sample_rate=getattr(config, "mp3_sample_rate", 48000))
                 except Exception as e:
                     logger.error(f"[generate_music] Failed to save audio file: {e}")
-                    audio_path = ""  # Fallback to empty path
+                    raise RuntimeError(f"Failed to save generated audio: {e}") from e
 
             audio_dict = {
                 "path": audio_path or "",  # File path (saved here, not in handler)
@@ -1110,134 +1000,6 @@ def generate_music(
             audios=[],
             status_message=f"Error: {str(e)}",
             extra_outputs={},
-            success=False,
-            error=str(e),
-        )
-
-
-def understand_music(
-    llm_handler,
-    audio_codes: str,
-    temperature: float = 0.85,
-    top_k: Optional[int] = None,
-    top_p: Optional[float] = None,
-    repetition_penalty: float = 1.0,
-    use_constrained_decoding: bool = True,
-    constrained_decoding_debug: bool = False,
-) -> UnderstandResult:
-    """Understand music from audio codes using the 5Hz Language Model.
-    
-    This function analyzes audio semantic codes and generates metadata about the music,
-    including caption, lyrics, BPM, duration, key scale, language, and time signature.
-    
-    If audio_codes is empty or "NO USER INPUT", the LM will generate a sample example
-    instead of analyzing existing codes.
-    
-    Note: cfg_scale and negative_prompt are not supported in understand mode.
-    
-    Args:
-        llm_handler: Initialized LLM handler (LLMHandler instance)
-        audio_codes: String of audio code tokens (e.g., "<|audio_code_123|><|audio_code_456|>...")
-                     Use empty string or "NO USER INPUT" to generate a sample example.
-        temperature: Sampling temperature for generation (0.0-2.0). Higher = more creative.
-        top_k: Top-K sampling (None or 0 = disabled)
-        top_p: Top-P (nucleus) sampling (None or 1.0 = disabled)
-        repetition_penalty: Repetition penalty (1.0 = no penalty)
-        use_constrained_decoding: Whether to use FSM-based constrained decoding for metadata
-        constrained_decoding_debug: Whether to enable debug logging for constrained decoding
-        
-    Returns:
-        UnderstandResult with parsed metadata fields and status
-        
-    Example:
-        >>> result = understand_music(llm_handler, audio_codes="<|audio_code_123|>...")
-        >>> if result.success:
-        ...     print(f"Caption: {result.caption}")
-        ...     print(f"BPM: {result.bpm}")
-        ...     print(f"Lyrics: {result.lyrics}")
-    """
-    # Check if LLM is initialized
-    if not llm_handler.llm_initialized:
-        return UnderstandResult(
-            status_message="5Hz LM not initialized. Please initialize it first.",
-            success=False,
-            error="LLM not initialized",
-        )
-    
-    # If codes are empty, use "NO USER INPUT" to generate a sample example
-    if not audio_codes or not audio_codes.strip():
-        audio_codes = "NO USER INPUT"
-    
-    try:
-        # Call LLM understanding
-        metadata, status = llm_handler.understand_audio_from_codes(
-            audio_codes=audio_codes,
-            temperature=temperature,
-            top_k=top_k,
-            top_p=top_p,
-            repetition_penalty=repetition_penalty,
-            use_constrained_decoding=use_constrained_decoding,
-            constrained_decoding_debug=constrained_decoding_debug,
-        )
-        
-        # Check if LLM returned empty metadata (error case)
-        if not metadata:
-            return UnderstandResult(
-                status_message=status or "Failed to understand audio codes",
-                success=False,
-                error=status or "Empty metadata returned",
-            )
-        
-        # Extract and convert fields
-        caption = metadata.get('caption', '')
-        lyrics = metadata.get('lyrics', '')
-        keyscale = metadata.get('keyscale', '')
-        language = metadata.get('language', metadata.get('vocal_language', ''))
-        timesignature = metadata.get('timesignature', '')
-        
-        # Convert BPM to int
-        bpm = None
-        bpm_value = metadata.get('bpm')
-        if bpm_value is not None and bpm_value != 'N/A' and bpm_value != '':
-            try:
-                bpm = int(bpm_value)
-            except (ValueError, TypeError):
-                pass
-        
-        # Convert duration to float
-        duration = None
-        duration_value = metadata.get('duration')
-        if duration_value is not None and duration_value != 'N/A' and duration_value != '':
-            try:
-                duration = float(duration_value)
-            except (ValueError, TypeError):
-                pass
-        
-        # Clean up N/A values
-        if keyscale == 'N/A':
-            keyscale = ''
-        if language == 'N/A':
-            language = ''
-        if timesignature == 'N/A':
-            timesignature = ''
-        
-        return UnderstandResult(
-            caption=caption,
-            lyrics=lyrics,
-            bpm=bpm,
-            duration=duration,
-            keyscale=keyscale,
-            language=language,
-            timesignature=timesignature,
-            status_message=status,
-            success=True,
-            error=None,
-        )
-        
-    except Exception as e:
-        logger.exception("Music understanding failed")
-        return UnderstandResult(
-            status_message=f"Error: {str(e)}",
             success=False,
             error=str(e),
         )

@@ -1,10 +1,8 @@
 """VAE encode orchestration helpers for tiled audio-to-latent conversion."""
 
 import math
-from typing import Optional
 
 import torch
-from loguru import logger
 
 from acestep.gpu_config import get_gpu_memory_gb
 
@@ -24,25 +22,6 @@ class VaeEncodeMixin:
         Returns:
             Latent tensor shaped ``[batch, latent_channels, latent_frames]``.
         """
-        # ---- MLX fast path (macOS Apple Silicon) ----
-        if self.use_mlx_vae and self.mlx_vae is not None:
-            input_was_2d = audio.dim() == 2
-            if input_was_2d:
-                audio = audio.unsqueeze(0)
-            try:
-                result = self._mlx_vae_encode_sample(audio)
-                if input_was_2d:
-                    result = result.squeeze(0)
-                return result
-            except Exception as exc:
-                logger.warning(
-                    f"[tiled_encode] MLX VAE encode failed ({type(exc).__name__}: {exc}), "
-                    f"falling back to PyTorch VAE..."
-                )
-                if input_was_2d:
-                    audio = audio.squeeze(0)
-
-        # ---- PyTorch path (CUDA / MPS / CPU) ----
         if chunk_size is None:
             gpu_memory = get_gpu_memory_gb()
             if gpu_memory <= 0 and self.device == "mps":

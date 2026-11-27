@@ -194,8 +194,8 @@ class GenerateMusicRequestMixinTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertIsNone(processed_src_audio)
 
-    def test_should_return_intermediate_always_true(self):
-        """Intermediate tensors must always be returned for LRC generation support."""
+    def test_should_return_intermediate_false_for_cli(self):
+        """CLI generation does not request unused intermediate tensors."""
         host = _Host()
         for task in ("text2music", "cover", "cover-nofsq", "repaint"):
             inputs = host._prepare_generate_music_service_inputs(
@@ -214,9 +214,9 @@ class GenerateMusicRequestMixinTests(unittest.TestCase):
                 repainting_start=0.0,
                 repainting_end=1.0,
             )
-            self.assertTrue(
+            self.assertFalse(
                 inputs["should_return_intermediate"],
-                f"should_return_intermediate must be True for task_type={task!r}",
+                f"should_return_intermediate must be False for task_type={task!r}",
             )
 
 
