@@ -1170,6 +1170,8 @@ def main():
     except ValueError as e:
         parser.error(f"Invalid format for timesteps. Expected a list of numbers (e.g., '[1.0, 0.5, 0.0]' or '0.97,0.5,0'). Error: {e}")
 
+    if isinstance(args.seeds, int):
+        args.seeds = [args.seeds]
     if args.seeds:
         args.batch_size = len(args.seeds)
         args.use_random_seed = False
