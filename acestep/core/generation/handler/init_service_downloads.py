@@ -7,11 +7,10 @@ from loguru import logger
 
 from acestep.model_downloader import (
     DEFAULT_VAE_VARIANT,
-    check_main_model_exists,
     check_model_exists,
     check_vae_exists,
     ensure_dit_model,
-    ensure_main_model,
+    ensure_main_component,
     ensure_vae_model,
 )
 
@@ -28,13 +27,6 @@ class InitServiceDownloadsMixin:
         vae_variant: Optional[str] = None,
     ) -> Optional[Tuple[str, bool]]:
         """Ensure required checkpoint assets exist locally, downloading when missing."""
-        if not check_main_model_exists(checkpoint_path):
-            logger.info("[initialize_service] Main model not found, starting auto-download...")
-            success, msg = ensure_main_model(checkpoint_path, prefer_source=prefer_source)
-            if not success:
-                return f"ERROR: Failed to download main model: {msg}", False
-            logger.info(f"[initialize_service] {msg}")
-
         if config_path == "":
             logger.warning(
                 "[initialize_service] Empty config_path; pass None to use the default model."
@@ -47,17 +39,20 @@ class InitServiceDownloadsMixin:
                 return f"ERROR: Failed to download DiT model '{config_path}': {msg}", False
             logger.info(f"[initialize_service] {msg}")
 
-        if vae_variant and vae_variant != DEFAULT_VAE_VARIANT:
-            if not check_vae_exists(vae_variant, checkpoint_path):
-                logger.info(
-                    f"[initialize_service] VAE variant '{vae_variant}' not found, starting auto-download..."
-                )
-                success, msg = ensure_vae_model(
-                    vae_variant, checkpoint_path, prefer_source=prefer_source
-                )
-                if not success:
-                    return f"ERROR: Failed to download VAE variant '{vae_variant}': {msg}", False
-                logger.info(f"[initialize_service] {msg}")
+        vae_variant = vae_variant or DEFAULT_VAE_VARIANT
+        if not check_vae_exists(vae_variant, checkpoint_path):
+            success, msg = ensure_vae_model(vae_variant, checkpoint_path, prefer_source=prefer_source)
+            if not success:
+                return f"ERROR: Failed to download VAE variant '{vae_variant}': {msg}", False
+            logger.info(f"[initialize_service] {msg}")
+
+        if not check_model_exists("Qwen3-Embedding-0.6B", checkpoint_path):
+            success, msg = ensure_main_component(
+                "Qwen3-Embedding-0.6B", checkpoint_path, prefer_source=prefer_source
+            )
+            if not success:
+                return f"ERROR: Failed to download text encoder: {msg}", False
+            logger.info(f"[initialize_service] {msg}")
 
         return None
 

@@ -48,7 +48,7 @@ uv run python cli.py --help
 uv run python -m unittest acestep.cli_smoke_test
 ```
 
-Model generation requires the appropriate hardware, checkpoints, and backend dependencies.
+Model generation requires the appropriate hardware, checkpoints, and PyTorch dependencies. Automatic downloads fetch only required components; the explicit download command can fetch the complete model set.
 
 ## License
 

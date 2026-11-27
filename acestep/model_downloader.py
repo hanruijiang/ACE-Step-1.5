@@ -163,6 +163,7 @@ def _download_from_huggingface_internal(
     repo_id: str,
     local_dir: Path,
     token: Optional[str] = None,
+    allow_patterns: Optional[List[str]] = None,
 ) -> None:
     """
     Internal function to download from HuggingFace Hub.
@@ -184,12 +185,14 @@ def _download_from_huggingface_internal(
         local_dir=str(local_dir),
         local_dir_use_symlinks="auto",
         token=token,
+        allow_patterns=allow_patterns,
     )
 
 
 def _download_from_modelscope_internal(
     repo_id: str,
     local_dir: Path,
+    allow_patterns: Optional[List[str]] = None,
 ) -> None:
     """
     Internal function to download from ModelScope.
@@ -208,6 +211,7 @@ def _download_from_modelscope_internal(
     snapshot_download(
         model_id=repo_id,
         local_dir=str(local_dir),
+        allow_patterns=allow_patterns,
     )
 
 
@@ -216,6 +220,7 @@ def _smart_download(
     local_dir: Path,
     token: Optional[str] = None,
     prefer_source: Optional[str] = None,
+    allow_patterns: Optional[List[str]] = None,
 ) -> Tuple[bool, str]:
     """
     Smart download with automatic fallback between HuggingFace and ModelScope.
@@ -251,13 +256,13 @@ def _smart_download(
     if use_huggingface_first:
         logger.info("[Model Download] Using HuggingFace Hub...")
         try:
-            _download_from_huggingface_internal(repo_id, local_dir, token)
+            _download_from_huggingface_internal(repo_id, local_dir, token, allow_patterns)
             return True, f"Successfully downloaded from HuggingFace: {repo_id}"
         except Exception as e:
             logger.warning(f"[Model Download] HuggingFace download failed: {e}")
             logger.info("[Model Download] Falling back to ModelScope...")
             try:
-                _download_from_modelscope_internal(repo_id, local_dir)
+                _download_from_modelscope_internal(repo_id, local_dir, allow_patterns)
                 return True, f"Successfully downloaded from ModelScope: {repo_id}"
             except Exception as e2:
                 error_msg = f"Both HuggingFace and ModelScope downloads failed. HF: {e}, MS: {e2}"
@@ -266,13 +271,13 @@ def _smart_download(
     else:
         logger.info("[Model Download] Using ModelScope...")
         try:
-            _download_from_modelscope_internal(repo_id, local_dir)
+            _download_from_modelscope_internal(repo_id, local_dir, allow_patterns)
             return True, f"Successfully downloaded from ModelScope: {repo_id}"
         except Exception as e:
             logger.warning(f"[Model Download] ModelScope download failed: {e}")
             logger.info("[Model Download] Falling back to HuggingFace Hub...")
             try:
-                _download_from_huggingface_internal(repo_id, local_dir, token)
+                _download_from_huggingface_internal(repo_id, local_dir, token, allow_patterns)
                 return True, f"Successfully downloaded from HuggingFace: {repo_id}"
             except Exception as e2:
                 error_msg = f"Both ModelScope and HuggingFace downloads failed. MS: {e}, HF: {e2}"
@@ -615,6 +620,31 @@ def ensure_main_model(
     return download_main_model(checkpoints_dir, token=token, prefer_source=prefer_source)
 
 
+def ensure_main_component(
+    component: str,
+    checkpoints_dir: Optional[Path] = None,
+    token: Optional[str] = None,
+    prefer_source: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Download only the requested component from the main model repository."""
+    if component not in MAIN_MODEL_COMPONENTS:
+        return False, f"Unknown main model component: {component}"
+    checkpoints_dir = Path(checkpoints_dir) if checkpoints_dir is not None else get_checkpoints_dir()
+    if check_model_exists(component, checkpoints_dir):
+        return True, f"Model component '{component}' is available"
+    success, msg = _smart_download(
+        MAIN_MODEL_REPO, checkpoints_dir, token, prefer_source,
+        allow_patterns=[f"{component}/*"],
+    )
+    if not success:
+        return False, msg
+    if not check_model_exists(component, checkpoints_dir):
+        return False, f"Downloaded snapshot does not contain weights for '{component}'"
+    if component in _CHECKPOINT_TO_VARIANT:
+        _sync_model_code_files(component, checkpoints_dir)
+    return True, msg
+
+
 def ensure_lm_model(
     model_name: Optional[str] = None,
     checkpoints_dir: Optional[Path] = None,
@@ -643,6 +673,9 @@ def ensure_lm_model(
 
     if check_model_exists(model_name, checkpoints_dir):
         return True, f"LM model '{model_name}' is available"
+
+    if model_name == DEFAULT_LM_MODEL:
+        return ensure_main_component(model_name, checkpoints_dir, token, prefer_source)
 
     # Check if this is a known LM model
     if model_name not in SUBMODEL_REGISTRY:
@@ -689,7 +722,7 @@ def ensure_dit_model(
 
     # Check if this is the default turbo model (part of main)
     if model_name == "acestep-v15-turbo":
-        return ensure_main_model(checkpoints_dir, token, prefer_source)
+        return ensure_main_component(model_name, checkpoints_dir, token, prefer_source)
 
     # Check if it's a known sub-model
     if model_name in SUBMODEL_REGISTRY:
@@ -798,13 +831,11 @@ def ensure_vae_model(
 ) -> Tuple[bool, str]:
     """Ensure the requested VAE variant is on disk, downloading if needed.
 
-    For ``"official"`` (or ``None``) this defers to ``ensure_main_model``
-    since the bundled VAE travels with the main model. For registered
-    community variants this calls ``download_vae`` when the directory
-    is missing.
+    For the official VAE, fetch only the VAE component. Community variants
+    are downloaded separately when missing.
     """
     if not vae_variant or vae_variant == DEFAULT_VAE_VARIANT:
-        return ensure_main_model(checkpoints_dir, token, prefer_source)
+        return ensure_main_component("vae", checkpoints_dir, token, prefer_source)
 
     if checkpoints_dir is None:
         checkpoints_dir = get_checkpoints_dir()
