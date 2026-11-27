@@ -976,7 +976,7 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
         try:
             config_to_save = {
                 k: v for k, v in vars(args).items()
-                if k not in {'config', 'backend', 'use_flash_attention'} and not k.startswith('_')
+                if k not in {'config', 'backend'} and not k.startswith('_')
             }
             with open(config_filename, 'w') as f:
                 toml.dump(config_to_save, f)
@@ -1075,7 +1075,6 @@ def main():
         "lm_model_path": None,
         "backend": None,
         "device": "auto",
-        "use_flash_attention": None,
         "offload_to_cpu": auto_offload,
         "offload_dit_to_cpu": False,
         "save_dir": "output",
@@ -1191,8 +1190,6 @@ def main():
     if args.backend not in (None, "pt", "pyTorch"):
         parser.error(f"Unsupported LM backend: {args.backend}. Only PyTorch is supported.")
     args.backend = "pt"
-    if args.use_flash_attention:
-        parser.error("External Flash Attention is no longer supported; PyTorch SDPA is used.")
     if cli_args.log_level is not None:
         args.log_level = cli_args.log_level
     try:

@@ -11,7 +11,6 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 from typing import Optional
 
 import torch
-import warnings
 
 from acestep.core.generation.handler import (
     AudioCodesMixin,
@@ -44,7 +43,6 @@ from acestep.core.generation.handler import (
 )
 
 
-warnings.filterwarnings("ignore")
 
 
 class AceStepHandler(

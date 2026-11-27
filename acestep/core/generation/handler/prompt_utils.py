@@ -100,38 +100,6 @@ class PromptMixin:
         lyrics_input = self._format_lyrics(lyrics, actual_language)
         return caption_input, lyrics_input
 
-    def _get_text_hidden_states(self, text_prompt: str) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Get hidden states and attention mask from text encoder."""
-        if self.text_tokenizer is None or self.text_encoder is None:
-            raise ValueError("Text encoder not initialized")
-
-        try:
-            with self._load_model_context("text_encoder"):
-                text_inputs = self.text_tokenizer(
-                    text_prompt,
-                    padding="longest",
-                    truncation=True,
-                    max_length=256,
-                    return_tensors="pt",
-                )
-                text_input_ids = text_inputs.input_ids.to(self.device)
-                text_attention_mask = text_inputs.attention_mask.to(self.device).bool()
-
-                with torch.inference_mode():
-                    text_outputs = self.text_encoder(text_input_ids)
-                    if hasattr(text_outputs, "last_hidden_state"):
-                        text_hidden_states = text_outputs.last_hidden_state
-                    elif isinstance(text_outputs, tuple):
-                        text_hidden_states = text_outputs[0]
-                    else:
-                        text_hidden_states = text_outputs
-
-                text_hidden_states = text_hidden_states.to(self.dtype)
-                return text_hidden_states, text_attention_mask
-        except (AttributeError, RuntimeError, TypeError, ValueError):
-            logger.exception("[_get_text_hidden_states] Failed to encode text prompt")
-            raise
-
     def _extract_caption_and_language(
         self,
         metas: List[Union[str, Dict[str, Any]]],

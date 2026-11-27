@@ -16,7 +16,7 @@ import os
 import re
 import sys
 from dataclasses import dataclass
-from typing import Optional, List, Dict
+from typing import Optional, List
 from loguru import logger
 
 
@@ -199,23 +199,6 @@ class GPUConfig:
     # LM configuration
     init_lm_default: bool  # Whether to initialize LM by default
     available_lm_models: List[str]  # Available LM models for this tier
-    recommended_lm_model: (
-        str  # Recommended default LM model path (empty if LM not available)
-    )
-
-    # Offload defaults
-    offload_to_cpu_default: bool  # Whether offload_to_cpu should be enabled by default
-    offload_dit_to_cpu_default: (
-        bool  # Whether offload_dit_to_cpu should be enabled by default
-    )
-
-    # Quantization / compile defaults
-    quantization_default: bool  # Whether INT8 quantization should be enabled by default
-    compile_model_default: bool  # Whether torch.compile should be enabled by default
-
-    # LM memory allocation (GB) for each model size
-    lm_memory_gb: Dict[str, float]  # e.g., {"0.6B": 3, "1.7B": 8, "4B": 12}
-
     # Save-memory mode: skip retaining generated latents in extra_outputs.
     # Controlled via ACESTEP_SAVE_MEMORY=1 environment variable.
     save_memory_mode: bool = False
@@ -232,12 +215,6 @@ GPU_TIER_CONFIGS = {
         "max_batch_size_without_lm": 1,
         "init_lm_default": False,
         "available_lm_models": [],
-        "recommended_lm_model": "",
-        "offload_to_cpu_default": True,
-        "offload_dit_to_cpu_default": True,
-        "quantization_default": True,  # INT8 essential to fit DiT in ~4GB
-        "compile_model_default": True,
-        "lm_memory_gb": {},
     },
     "tier2": {  # 4-6GB
         # Offload mode.  DiT(4.46) + context(0.5) + activations ≈ 5.0GB.
@@ -249,12 +226,6 @@ GPU_TIER_CONFIGS = {
         "max_batch_size_without_lm": 1,
         "init_lm_default": False,
         "available_lm_models": [],
-        "recommended_lm_model": "",
-        "offload_to_cpu_default": True,
-        "offload_dit_to_cpu_default": True,
-        "quantization_default": True,
-        "compile_model_default": True,
-        "lm_memory_gb": {},
     },
     "tier3": {  # 6-8GB
         # Offload mode.  DiT(4.46) + context(0.5) ≈ 5.0GB.
@@ -266,12 +237,6 @@ GPU_TIER_CONFIGS = {
         "max_batch_size_without_lm": 2,
         "init_lm_default": True,
         "available_lm_models": ["acestep-5Hz-lm-0.6B"],
-        "recommended_lm_model": "acestep-5Hz-lm-0.6B",
-        "offload_to_cpu_default": True,
-        "offload_dit_to_cpu_default": True,
-        "quantization_default": True,
-        "compile_model_default": True,
-        "lm_memory_gb": {"0.6B": 3},
     },
     "tier4": {  # 8-12GB
         # Can keep DiT + 0.6B LM simultaneously on GPU (4.46+1.2+0.6=6.26GB).
@@ -282,12 +247,6 @@ GPU_TIER_CONFIGS = {
         "max_batch_size_without_lm": 4,
         "init_lm_default": True,
         "available_lm_models": ["acestep-5Hz-lm-0.6B"],
-        "recommended_lm_model": "acestep-5Hz-lm-0.6B",
-        "offload_to_cpu_default": True,
-        "offload_dit_to_cpu_default": True,
-        "quantization_default": True,
-        "compile_model_default": True,
-        "lm_memory_gb": {"0.6B": 3},
     },
     "tier5": {  # 12-16GB
         # DiT + 1.7B LM (4.46+3.45+0.44=8.35GB) fits comfortably.
@@ -298,12 +257,6 @@ GPU_TIER_CONFIGS = {
         "max_batch_size_without_lm": 4,
         "init_lm_default": True,
         "available_lm_models": ["acestep-5Hz-lm-0.6B", "acestep-5Hz-lm-1.7B"],
-        "recommended_lm_model": "acestep-5Hz-lm-1.7B",
-        "offload_to_cpu_default": True,
-        "offload_dit_to_cpu_default": False,  # 12-16GB can keep DiT on GPU
-        "quantization_default": True,
-        "compile_model_default": True,
-        "lm_memory_gb": {"0.6B": 3, "1.7B": 8},
     },
     "tier6a": {  # 16-20GB (e.g., RTX 4060 Ti 16GB, RTX 3080 16GB)
         # On 16GB GPUs: DiT(INT8, ~2.4GB) + LM 1.7B(~7.6GB peak with offload) = ~10GB peak
@@ -315,12 +268,6 @@ GPU_TIER_CONFIGS = {
         "max_batch_size_without_lm": 8,
         "init_lm_default": True,
         "available_lm_models": ["acestep-5Hz-lm-0.6B", "acestep-5Hz-lm-1.7B"],
-        "recommended_lm_model": "acestep-5Hz-lm-1.7B",
-        "offload_to_cpu_default": True,  # Still offload VAE/TextEnc to save VRAM for LM
-        "offload_dit_to_cpu_default": False,
-        "quantization_default": True,
-        "compile_model_default": True,
-        "lm_memory_gb": {"0.6B": 3, "1.7B": 8},
     },
     "tier6b": {  # 20-24GB (e.g., RTX 3090, RTX 4090)
         # 20-24GB: no offload, no quantization. DiT(bf16, ~4.7GB) + LM 1.7B(~3.4GB) = ~8.1GB
@@ -335,12 +282,6 @@ GPU_TIER_CONFIGS = {
             "acestep-5Hz-lm-1.7B",
             "acestep-5Hz-lm-4B",
         ],
-        "recommended_lm_model": "acestep-5Hz-lm-1.7B",
-        "offload_to_cpu_default": False,  # 20-24GB can hold all models
-        "offload_dit_to_cpu_default": False,
-        "quantization_default": False,  # Enough VRAM, quantization optional
-        "compile_model_default": True,
-        "lm_memory_gb": {"0.6B": 3, "1.7B": 8, "4B": 12},
     },
     "unlimited": {  # >= 24GB
         "max_duration_with_lm": 600,  # 10 minutes (max supported)
@@ -353,12 +294,6 @@ GPU_TIER_CONFIGS = {
             "acestep-5Hz-lm-1.7B",
             "acestep-5Hz-lm-4B",
         ],
-        "recommended_lm_model": "acestep-5Hz-lm-4B",
-        "offload_to_cpu_default": False,
-        "offload_dit_to_cpu_default": False,
-        "quantization_default": False,  # Plenty of VRAM
-        "compile_model_default": True,
-        "lm_memory_gb": {"0.6B": 3, "1.7B": 8, "4B": 12},
     },
 }
 
@@ -673,17 +608,6 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
     """
     Get GPU configuration based on detected or provided GPU memory.
 
-    On macOS with MPS (Apple Silicon), several overrides are applied
-    automatically regardless of the tier selected by memory size:
-
-    - ``compile_model_default = False`` — ``torch.compile`` is not supported
-      on MPS and would error or silently fall back to eager mode.
-    - ``quantization_default = False`` — torchao INT8 quantization is
-      incompatible with MPS / macOS.
-    - ``offload_to_cpu_default = False`` — Apple Silicon uses unified memory;
-      offloading to CPU provides no benefit and adds overhead.
-    - ``offload_dit_to_cpu_default = False`` — same reason.
-
     Args:
         gpu_memory_gb: GPU memory in GB. If None, will be auto-detected.
 
@@ -696,15 +620,6 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
     tier = get_gpu_tier(gpu_memory_gb)
     config = GPU_TIER_CONFIGS[tier]
 
-    # --- MPS (Apple Silicon) overrides ---
-    _mps = is_mps_platform()
-    if _mps:
-        logger.info(
-            f"macOS MPS detected ({gpu_memory_gb:.1f} GB unified memory, tier={tier}). "
-            "Applying Apple Silicon optimizations: no compile, no quantization, "
-            "PyTorch MPS, no CPU offload."
-        )
-
     config = GPUConfig(
         tier=tier,
         gpu_memory_gb=gpu_memory_gb,
@@ -714,23 +629,6 @@ def get_gpu_config(gpu_memory_gb: Optional[float] = None) -> GPUConfig:
         max_batch_size_without_lm=config["max_batch_size_without_lm"],
         init_lm_default=config["init_lm_default"],
         available_lm_models=config["available_lm_models"],
-        recommended_lm_model=config.get("recommended_lm_model", ""),
-        # MPS: unified memory — offloading to CPU is pointless overhead
-        offload_to_cpu_default=False
-        if _mps
-        else config.get("offload_to_cpu_default", True),
-        offload_dit_to_cpu_default=False
-        if _mps
-        else config.get("offload_dit_to_cpu_default", True),
-        # MPS: torchao quantization is not supported
-        quantization_default=False
-        if _mps
-        else config.get("quantization_default", True),
-        # MPS: keep torch.compile disabled.
-        compile_model_default=False
-        if _mps
-        else config.get("compile_model_default", True),
-        lm_memory_gb=config["lm_memory_gb"],
     )
     return config
 
