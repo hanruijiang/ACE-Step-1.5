@@ -1,6 +1,6 @@
 # ACE-Step 1.5 — CLI inference
 
-A CLI-only distribution of ACE-Step 1.5 for local music generation and audio editing. The original model weights and license are unchanged. No Web UI, HTTP API, or training entry points are included.
+ACE-Step 1.5 CLI for local music generation and audio editing. Models are downloaded from Hugging Face.
 
 ## Installation
 
@@ -36,7 +36,7 @@ uv run acestep --config config.toml
 uv run acestep-download --help
 ```
 
-The wizard supports text2music, cover, repaint, lego, extract and complete. It preserves local model selection, 5Hz LM thinking and sample formatting, metadata, batch generation, and audio output options. Lego, extract and complete require a compatible base model. PyTorch is the sole inference backend. Supported output formats: WAV, WAV32, FLAC, MP3, Opus and AAC.
+The wizard supports text2music, cover, repaint, lego, extract and complete. TOML configurations also support cover-nofsq. It preserves local model selection, 5Hz LM thinking and sample formatting, metadata, batch generation, and audio output options. Lego, extract and complete require a compatible base model. PyTorch is the sole inference backend. Supported output formats: WAV, WAV32, FLAC, MP3, Opus and AAC.
 
 Set `checkpoint_dir` in TOML or `ACESTEP_CHECKPOINTS_DIR` to store checkpoints outside the checkout; otherwise use `project_root/checkpoints` (project root defaults to `ACESTEP_PROJECT_ROOT` or the working directory). See [CLI guide](docs/en/CLI.md) for the TOML workflow and prompt editing.
 
@@ -48,7 +48,7 @@ uv run python cli.py --help
 uv run python -m unittest acestep.cli_smoke_test
 ```
 
-Model generation requires the appropriate hardware, checkpoints, and PyTorch dependencies. Automatic downloads fetch only required components; the explicit download command can fetch the complete model set.
+Model generation requires the appropriate hardware, checkpoints, and PyTorch dependencies. Automatic Hugging Face downloads fetch only required components; the explicit download command can fetch the complete model set.
 
 ## License
 

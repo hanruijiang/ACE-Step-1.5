@@ -33,15 +33,15 @@ python cli.py --configure --config config.toml
 
 - `-c` / `--config` — Path to a `.toml` configuration file to load.
 - `--configure` — Run wizard to save configuration without generating.
-- `--backend pt` — Compatibility option; PyTorch is the only inference backend.
+- `--backend pt` — Select the PyTorch inference backend.
 - `--log-level` — Logging level for internal modules. One of `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. Default: `INFO`.
 
 ---
 
 ## Wizard Flow
 
-1. Choose one of 6 tasks.
-2. Select a DiT model (from locally available models, or auto-download).
+1. Choose one of six tasks. TOML also supports `task_type = "cover-nofsq"`.
+2. Select a DiT model (from locally available models, or download from Hugging Face).
 3. Select an LM model (from locally available models, or auto-download).
 4. Provide task-specific inputs (source audio, tracks, etc.).
 5. For `text2music`: choose between Simple Mode (auto-generate caption/lyrics via LM) or manual input.

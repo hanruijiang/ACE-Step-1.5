@@ -50,7 +50,6 @@ class InitServiceOrchestratorMixin:
         offload_to_cpu: bool = False,
         offload_dit_to_cpu: bool = False,
         quantization: Optional[str] = None,
-        prefer_source: Optional[str] = None,
         vae_checkpoint: Optional[str] = None,
         checkpoint_dir: Optional[str] = None,
     ) -> Tuple[str, bool]:
@@ -129,7 +128,6 @@ class InitServiceOrchestratorMixin:
             precheck_failure = self._ensure_models_present(
                 checkpoint_path=checkpoint_path,
                 config_path=config_path,
-                prefer_source=prefer_source,
                 vae_variant=resolved_vae_variant,
             )
             if precheck_failure is not None:
@@ -185,7 +183,6 @@ class InitServiceOrchestratorMixin:
                 "offload_to_cpu": offload_to_cpu,
                 "offload_dit_to_cpu": offload_dit_to_cpu,
                 "quantization": self.quantization,
-                "prefer_source": prefer_source,
                 "vae_checkpoint": resolved_vae_variant,
             }
 

@@ -23,7 +23,6 @@ class InitServiceDownloadsMixin:
         *,
         checkpoint_path: Path,
         config_path: str,
-        prefer_source: Optional[str],
         vae_variant: Optional[str] = None,
     ) -> Optional[Tuple[str, bool]]:
         """Ensure required checkpoint assets exist locally, downloading when missing."""
@@ -34,21 +33,21 @@ class InitServiceDownloadsMixin:
 
         if not check_model_exists(config_path, checkpoint_path):
             logger.info(f"[initialize_service] DiT model '{config_path}' not found, starting auto-download...")
-            success, msg = ensure_dit_model(config_path, checkpoint_path, prefer_source=prefer_source)
+            success, msg = ensure_dit_model(config_path, checkpoint_path)
             if not success:
                 return f"ERROR: Failed to download DiT model '{config_path}': {msg}", False
             logger.info(f"[initialize_service] {msg}")
 
         vae_variant = vae_variant or DEFAULT_VAE_VARIANT
         if not check_vae_exists(vae_variant, checkpoint_path):
-            success, msg = ensure_vae_model(vae_variant, checkpoint_path, prefer_source=prefer_source)
+            success, msg = ensure_vae_model(vae_variant, checkpoint_path)
             if not success:
                 return f"ERROR: Failed to download VAE variant '{vae_variant}': {msg}", False
             logger.info(f"[initialize_service] {msg}")
 
         if not check_model_exists("Qwen3-Embedding-0.6B", checkpoint_path):
             success, msg = ensure_main_component(
-                "Qwen3-Embedding-0.6B", checkpoint_path, prefer_source=prefer_source
+                "Qwen3-Embedding-0.6B", checkpoint_path
             )
             if not success:
                 return f"ERROR: Failed to download text encoder: {msg}", False

@@ -24,7 +24,7 @@ dependencies = [
     "soundfile>=0.13.1",
     "loguru>=0.7.3",
     "einops>=0.8.1",
-    "accelerate>=1.12.0",
+    "accelerate>=1.12.0", # Low-memory VAE loading
     "vector-quantize-pytorch>=1.27.15",
     "toml",
     "numpy",
@@ -32,11 +32,9 @@ dependencies = [
     "tqdm",
     "python-dotenv",
     "huggingface-hub",
-    "safetensors==0.7.0",
-    "modelscope",
     "pytorch-wavelets>=1.3.0",
     "pywavelets>=1.9.0",
-    "setuptools<72",
+    "setuptools<72", # pytorch-wavelets uses pkg_resources
 ]
 
 [project.optional-dependencies]
@@ -85,4 +83,4 @@ dev = ["pytest"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["acestep"]
-exclude = ["/acestep/third_parts", "/acestep/third_parts/**", "**/*_test.py", "**/*_test_support.py", "**/*_test_helpers.py", "**/__pycache__/**", "**/*.pyc"]
+exclude = ["**/*_test.py", "**/*_test_support.py", "**/*_test_helpers.py", "**/__pycache__/**", "**/*.pyc"]

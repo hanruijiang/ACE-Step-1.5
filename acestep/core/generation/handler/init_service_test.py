@@ -269,7 +269,6 @@ class InitServiceMixinTests(unittest.TestCase):
                 result = host._ensure_models_present(
                     checkpoint_path=Path("K:/fake_root/checkpoints"),
                     config_path="acestep-v15-turbo",
-                    prefer_source=None,
                 )
         self.assertEqual(result, ("ERROR: Failed to download DiT model 'acestep-v15-turbo': boom", False))
 
@@ -392,7 +391,6 @@ class InitServiceMixinTests(unittest.TestCase):
             "offload_to_cpu",
             "offload_dit_to_cpu",
             "quantization",
-            "prefer_source",
             "vae_checkpoint",
         }
         self.assertEqual(set(host.last_init_params.keys()), expected_keys)
