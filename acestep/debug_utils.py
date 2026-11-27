@@ -8,13 +8,9 @@ from typing import Optional, Callable, Union
 
 from acestep.constants import (
     TENSOR_DEBUG_MODE,
-    DEBUG_API_SERVER,
     DEBUG_INFERENCE,
-    DEBUG_TRAINING,
-    DEBUG_DATASET,
     DEBUG_AUDIO,
     DEBUG_LLM,
-    DEBUG_UI,
     DEBUG_MODEL_LOADING,
     DEBUG_GPU,
 )
@@ -132,13 +128,9 @@ def debug_log(message: Union[str, Callable[[], str]], *, mode: str = TENSOR_DEBU
 # Placeholder debug switches registry (for centralized access)
 DEBUG_SWITCHES = {
     "tensor": TENSOR_DEBUG_MODE,
-    "api_server": DEBUG_API_SERVER,
     "inference": DEBUG_INFERENCE,
-    "training": DEBUG_TRAINING,
-    "dataset": DEBUG_DATASET,
     "audio": DEBUG_AUDIO,
     "llm": DEBUG_LLM,
-    "ui": DEBUG_UI,
     "model_loading": DEBUG_MODEL_LOADING,
     "gpu": DEBUG_GPU,
 }

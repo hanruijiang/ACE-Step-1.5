@@ -25,9 +25,6 @@ class RecordingDitHandler:
     def __init__(self) -> None:
         """Initialize with no captured call; ``generate_kwargs`` stays None until called."""
         self.generate_kwargs: Optional[dict[str, Any]] = None
-        self.lora_loaded = False
-        self.use_lora = False
-        self.lora_scale = 1.0
 
     def prepare_seeds(self, batch_size: int, seed: str, use_random_seed: bool) -> tuple[list[int], None]:
         """Return a fixed seed list, ignoring inputs; the real handler parses ``seed``.

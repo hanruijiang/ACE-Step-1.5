@@ -66,8 +66,8 @@ _configure_logging()
 
 from acestep.handler import AceStepHandler
 from acestep.llm_inference import LLMHandler
-from acestep.inference import GenerationParams, GenerationConfig, generate_music, create_sample, format_sample
-from acestep.constants import DEFAULT_DIT_INSTRUCTION, TASK_INSTRUCTIONS
+from acestep.inference import GenerationParams, GenerationConfig, generate_music, create_sample, format_sample, DIRECT_CONDITIONING_TASKS
+from acestep.constants import DEFAULT_DIT_INSTRUCTION, TASK_INSTRUCTIONS, TASK_TYPES
 from acestep.gpu_config import get_gpu_config, set_global_gpu_config, is_mps_platform
 import torch
 
@@ -91,17 +91,6 @@ TRACK_CHOICES = [
 def _get_project_root() -> str:
     from acestep.model_downloader import get_project_root
     return str(get_project_root())
-
-
-def _get_default_checkpoint_dir() -> str:
-    """Return the default checkpoints directory via the shared resolver.
-
-    Always delegates to model_downloader.get_checkpoints_dir() so that
-    ACESTEP_CHECKPOINTS_DIR, ACESTEP_PROJECT_ROOT, and the cwd-based
-    fallback are handled in one place.
-    """
-    from acestep.model_downloader import get_checkpoints_dir
-    return str(get_checkpoints_dir())
 
 
 def _parse_description_hints(description: str) -> tuple[Optional[str], bool]:
@@ -1054,12 +1043,12 @@ def main():
     parser.add_argument(
         "--log-level",
         type=str,
-        default="INFO",
+        default=None,
         help="Logging level for internal modules (TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL).",
     )
     cli_args = parser.parse_args()
 
-    _configure_logging(level=cli_args.log_level)
+    _configure_logging(level=cli_args.log_level or "INFO")
 
     default_batch_size = 1 if not cli_args.config else config_defaults.batch_size
 
@@ -1160,7 +1149,7 @@ def main():
         "vae_checkpoint": None,
         "mp3_bitrate": config_defaults.mp3_bitrate,
         "mp3_sample_rate": config_defaults.mp3_sample_rate,
-        "log_level": cli_args.log_level,
+        "log_level": cli_args.log_level or "INFO",
     }
 
     args = argparse.Namespace(**defaults)
@@ -1189,6 +1178,12 @@ def main():
     # CLI --backend overrides config file and auto-detection
     if cli_args.backend is not None:
         args.backend = cli_args.backend
+    if cli_args.log_level is not None:
+        args.log_level = cli_args.log_level
+    try:
+        _configure_logging(level=args.log_level)
+    except (ValueError, TypeError) as exc:
+        parser.error(f"Invalid log level: {exc}")
 
     args.project_root = os.path.abspath(os.path.expanduser(str(args.project_root or _get_project_root())))
     from acestep.model_downloader import get_checkpoints_dir
@@ -1277,11 +1272,30 @@ def main():
         args.instrumental = True
 
     # --- Task-specific validation and instruction helpers ---
-    if args.task_type in {"cover", "repaint", "lego", "extract", "complete"}:
+    if args.task_type not in TASK_TYPES:
+        parser.error(f"Unsupported task_type: {args.task_type}")
+    if args.prompt and not args.caption:
+        args.caption = args.prompt  # legacy TOML alias
+    if args.flow_edit_morph:
+        if args.task_type not in {"text2music", "cover", "cover-nofsq"}:
+            parser.error("FlowEdit is supported on text2music, cover and cover-nofsq only.")
+        if not args.src_audio:
+            parser.error("FlowEdit requires src_audio.")
+        if args.sample_mode or args.sample_query or args.use_format or args.use_cot_lyrics:
+            parser.error("FlowEdit requires explicit target caption/lyrics, not LM sample/format/lyrics generation.")
+        if not (0 <= args.flow_edit_n_min <= args.flow_edit_n_max <= 1) or args.flow_edit_n_avg < 1:
+            parser.error("FlowEdit requires 0 <= n_min <= n_max <= 1 and n_avg >= 1.")
+    if args.repaint_mode not in {"conservative", "balanced", "aggressive"}:
+        parser.error(f"Unsupported repaint_mode: {args.repaint_mode}")
+    if not 0 <= args.retake_variance <= 1:
+        parser.error("retake_variance must be between 0 and 1.")
+    if args.quantization not in {None, "int8_weight_only", "fp8_weight_only", "w8a8_dynamic"}:
+        parser.error(f"Unsupported quantization: {args.quantization}")
+    if args.task_type in DIRECT_CONDITIONING_TASKS:
         if not args.src_audio:
             parser.error(f"--src_audio is required for task_type '{args.task_type}'.")
 
-    if args.task_type in {"cover", "repaint", "lego", "complete"}:
+    if args.task_type in {"cover", "cover-nofsq", "repaint", "lego", "complete"}:
         if not args.caption:
             parser.error(f"--caption is required for task_type '{args.task_type}'.")
 
@@ -1302,7 +1316,6 @@ def main():
         args.use_cot_lyrics = False
 
     # Auto-select instruction based on task_type if user didn't provide a custom instruction.
-    # Align with api_server behavior and TASK_INSTRUCTIONS defaults.
     if args.instruction == DEFAULT_DIT_INSTRUCTION and args.task_type in TASK_INSTRUCTIONS:
         if args.task_type in {"text2music", "cover", "repaint"}:
             args.instruction = TASK_INSTRUCTIONS[args.task_type]
@@ -1400,9 +1413,9 @@ def main():
     llm_handler.checkpoint_dir = args.checkpoint_dir
 
     base_only_tasks = {"lego", "extract", "complete"}
-    skip_lm_tasks = {"cover", "repaint"}
+    skip_lm_tasks = DIRECT_CONDITIONING_TASKS
     requires_lm = (
-        args.task_type not in skip_lm_tasks and (
+        args.task_type not in skip_lm_tasks and not args.flow_edit_morph and (
             args.thinking
             or args.sample_mode
             or bool(args.sample_query and str(args.sample_query).strip())
@@ -1503,6 +1516,8 @@ def main():
     )
     if not success:
         parser.error(f"DiT initialization failed: {status}")
+    if args.quantization and dit_handler.quantization != args.quantization:
+        parser.error(f"Requested quantization {args.quantization} is unavailable on this device; install a compatible torchao or omit quantization.")
 
     if requires_lm:
         from acestep.model_downloader import ensure_lm_model
@@ -1591,7 +1606,7 @@ def main():
                 args.keyscale = sample_result.keyscale
             if not args.timesignature:
                 args.timesignature = sample_result.timesignature
-            if args.duration <= 0:
+            if args.duration is None or args.duration <= 0:
                 args.duration = sample_result.duration
             if args.vocal_language in ("unknown", "", None):
                 args.vocal_language = sample_result.language
@@ -1668,7 +1683,7 @@ def main():
             if args.bpm is None: args.bpm = sample_result.bpm
             if not args.keyscale: args.keyscale = sample_result.keyscale
             if not args.timesignature: args.timesignature = sample_result.timesignature
-            if args.duration <= 0: args.duration = sample_result.duration
+            if args.duration is None or args.duration <= 0: args.duration = sample_result.duration
             if args.vocal_language == 'unknown': args.vocal_language = sample_result.language
 
             print(f"  - Caption: {args.caption}")
