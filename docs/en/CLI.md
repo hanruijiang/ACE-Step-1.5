@@ -33,6 +33,7 @@ python cli.py --configure --config config.toml
 
 - `-c` / `--config` — Path to a `.toml` configuration file to load.
 - `--configure` — Run wizard to save configuration without generating.
+- `--backend {pt,vllm,mlx}` — Select the 5Hz LM backend; overrides TOML. Defaults to a compatible installed accelerator on NVIDIA CUDA or Apple Silicon, otherwise PT.
 - `--log-level` — Logging level for internal modules. One of `TRACE`, `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`. Default: `INFO`.
 
 ---
@@ -70,7 +71,13 @@ Behavior:
 
 The wizard saves a `.toml` file containing all parameters. These keys map directly to the fields used in `cli.py`.
 
-When you load a config with `--config`, all keys are applied to the runtime settings.
+When you load a config with `--config`, recognized keys are applied to runtime settings; unknown keys are rejected.
+
+Checkpoint path precedence: explicit `checkpoint_dir` (relative to `project_root` if not absolute), `ACESTEP_CHECKPOINTS_DIR`, then `project_root/checkpoints`. The root defaults to `ACESTEP_PROJECT_ROOT` or the working directory. All model discovery, download and inference use the same resolved directory.
+
+Advanced TOML options include `repaint_mode`, `repaint_strength`, `retake_seed`, `retake_variance`, `flow_edit_morph`, `flow_edit_source_caption`, `flow_edit_source_lyrics`, `flow_edit_n_min`, `flow_edit_n_max`, `flow_edit_n_avg`, `quantization` and `vae_checkpoint`. Set `flow_edit_morph = true` only for supported editing tasks with a source audio file. Quantization requires an appropriate optional torchao installation.
+
+`audio_format` accepts `wav`, `wav32`, `flac`, `mp3`, `opus`, and `aac`. Compressed output requires FFmpeg on PATH. MP3 options are `mp3_bitrate` and `mp3_sample_rate`. Invalid formats and failed generation return a nonzero exit status.
 
 ---
 
