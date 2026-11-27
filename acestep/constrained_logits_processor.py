@@ -1120,7 +1120,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         # Try encoding progressively longer prefixes, from longest to shortest
         # We want to find the longest prefix that encodes to a single token
         best_token = None
-        best_prefix_len = 0
         
         # First pass: find the longest prefix that encodes to exactly one token
         for end in range(len(remaining), 0, -1):  # Start from longest prefix
@@ -1130,7 +1129,6 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
                 # Found a prefix that encodes to a single token
                 # Use this one (longest match)
                 best_token = tokens[0]
-                best_prefix_len = end
                 if self.debug:
                     logger.debug(f"Found single-token match: prefix={repr(prefix)}, token_id={best_token}, token_text={repr(self.tokenizer.decode([best_token]))}")
                 break

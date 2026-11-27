@@ -133,9 +133,6 @@ class ServiceGenerateExecuteMixinTests(unittest.TestCase):
             payload=payload,
             generate_kwargs={},
             seed_param=1234,
-            infer_method="ode",
-            shift=1.0,
-            audio_cover_strength=1.0,
         )
 
         self.assertFalse(host.model.generate_audio.call_args.kwargs["dcw_enabled"])

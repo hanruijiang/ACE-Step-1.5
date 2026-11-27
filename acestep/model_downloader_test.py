@@ -2,7 +2,6 @@
 
 import importlib.util
 import os
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -48,17 +47,6 @@ class TestGetProjectRoot(unittest.TestCase):
                 result = self.mod.get_project_root()
             self.assertNotEqual(result, Path(os.getcwd()))
             self.assertEqual(result, Path(tmp_dir).resolve())
-
-    def test_does_not_derive_path_from_package_file(self):
-        """get_project_root must not return a __file__-derived path (site-packages fix)."""
-        env = {k: v for k, v in os.environ.items() if k != "ACESTEP_PROJECT_ROOT"}
-        with patch.dict(os.environ, env, clear=True):
-            result = self.mod.get_project_root()
-        # The old __file__-based path would be the parent of the parent of model_downloader.py
-        old_style_path = Path(os.path.abspath(__file__)).parent.parent
-        # The current test is running with CWD == project root, so they happen to be equal
-        # here; what matters is the returned path equals CWD, not the module file ancestor.
-        self.assertEqual(result, Path(os.getcwd()))
 
 
 class TestGetCheckpointsDir(unittest.TestCase):

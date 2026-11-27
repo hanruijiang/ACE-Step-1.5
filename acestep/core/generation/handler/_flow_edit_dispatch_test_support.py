@@ -1,4 +1,4 @@
-"""Shared test fixtures for flow-edit overlay dispatch tests (#1156).
+"""Shared fixtures for FlowEdit dispatch.
 
 Underscored module name keeps it out of unittest discovery.
 """

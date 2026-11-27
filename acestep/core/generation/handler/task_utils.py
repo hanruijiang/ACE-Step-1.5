@@ -1,7 +1,7 @@
 """Task and seed helpers for handler decomposition."""
 
 import random
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 import torch
 from loguru import logger
@@ -18,7 +18,7 @@ class TaskUtilsMixin:
     def prepare_seeds(
         self, actual_batch_size: int, seed, use_random_seed: bool
     ) -> Tuple[List[int], str]:
-        """Prepare per-item seeds and UI seed string."""
+        """Resolve per-item seeds and their display string."""
         actual_seed_list: List[int] = []
         seed_value_for_ui = ""
         try:

@@ -4,7 +4,7 @@ ACE-Step 1.5 CLI for local music generation and audio editing. Models are downlo
 
 ## Installation
 
-Use Python 3.11 or 3.12 and [uv](https://docs.astral.sh/uv/). The default dependency configuration targets NVIDIA CUDA on Windows/Linux and Apple Silicon on macOS. Install FFmpeg separately and put it on PATH for MP3, Opus, AAC output and audio input formats not handled by SoundFile.
+Use Python 3.11 or 3.12 and [uv](https://docs.astral.sh/uv/). The default dependency configuration targets NVIDIA CUDA on Windows/Linux and Apple Silicon on macOS. Install FFmpeg on PATH for MP3, Opus, AAC, and input formats that SoundFile cannot read. MP3 requires the `libmp3lame` encoder and Opus requires `libopus`.
 
 ```bash
 uv sync
@@ -19,7 +19,7 @@ pip install -r requirements.txt
 python cli.py
 ```
 
-For AMD ROCm or Intel XPU, create a separate virtual environment, install the appropriate matching `torch` and `torchaudio` builds first, and then install the corresponding `requirements-rocm-linux.txt`, `requirements-rocm.txt`, or `requirements-xpu.txt`. Run `python cli.py` from that environment, not the default CUDA-targeted `uv run`. The Windows ROCm file contains SDK and wheel installation instructions.
+For AMD ROCm or Intel XPU, create a separate virtual environment, install the appropriate matching `torch` and `torchaudio` builds first, and then install the corresponding `requirements-rocm-linux.txt`, `requirements-rocm.txt`, or `requirements-xpu.txt`. Run `python cli.py` from that environment. The Windows ROCm file contains SDK and wheel installation instructions.
 
 ## Inference
 
@@ -32,8 +32,8 @@ uv run python cli.py --configure
 uv run python cli.py --config config.toml
 # Equivalent installed command
 uv run acestep --config config.toml
-# Download models explicitly (otherwise the CLI can download them)
-uv run acestep-download --help
+# List downloadable models and VAEs
+uv run acestep-download --list
 ```
 
 The wizard supports text2music, cover, repaint, lego, extract and complete. TOML configurations also support cover-nofsq. It supports local model selection, 5Hz LM thinking and sample formatting, metadata, batch generation, and audio output options. Lego, extract and complete require a compatible base model. PyTorch is the sole inference backend. Supported output formats: WAV, WAV32, FLAC, MP3, Opus and AAC.
@@ -48,7 +48,7 @@ uv run python cli.py --help
 uv run pytest -q
 ```
 
-Model generation requires the appropriate hardware, checkpoints, and PyTorch dependencies. Automatic Hugging Face downloads fetch only required components; the explicit download command can fetch the complete model set.
+Inference downloads missing components from Hugging Face as needed.
 
 ## License
 

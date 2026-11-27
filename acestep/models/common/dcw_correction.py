@@ -91,9 +91,6 @@ class DCWCorrector:
         self.high_scaler = float(high_scaler)
         self.wavelet = wavelet
         if self.is_active:
-            # One-line receipt so users can confirm the UI values actually
-            # reached the sampler.  If a wavelet change in the UI seems
-            # inert, grep this log line to see what was applied.
             logger.info(
                 "[DCW] Active — mode={}, scaler={:.4f}, high_scaler={:.4f}, wavelet={!r}",
                 self.mode, self.scaler, self.high_scaler, self.wavelet,

@@ -22,7 +22,7 @@ from torch import nn
 
 from einops import rearrange
 
-from transformers.cache_utils import Cache, DynamicCache, EncoderDecoderCache
+from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 from transformers.utils import logging
 from tqdm import tqdm
 
@@ -40,13 +40,10 @@ from acestep.models.common.dcw_correction import DCWCorrector
 logger = logging.get_logger(__name__)
 
 from acestep.models.common.modeling_layers import (
-    create_4d_mask,
     AceStepPreTrainedModel,
     AudioTokenDetokenizer,
     _repaint_step_injection,
     _repaint_boundary_blend,
-    pack_sequences,
-    XLAceStepTimbreEncoder as AceStepTimbreEncoder,
     XLAceStepAudioTokenizer as AceStepAudioTokenizer,
     XLAceStepDiTModel as AceStepDiTModel,
     XLAceStepConditionEncoder as AceStepConditionEncoder,
@@ -171,7 +168,6 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         Returns:
             Noise tensor of appropriate shape
         """
-        bsz = context_latents.shape[0]
         device = context_latents.device
         dtype = context_latents.dtype
         # Handle seed: can be int, List[int], or None

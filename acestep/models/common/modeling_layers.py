@@ -1245,8 +1245,6 @@ class AceStepDiTModel(AceStepPreTrainedModel):
         position_ids: Optional[torch.LongTensor] = None,
         output_attentions: Optional[bool] = False,
         return_hidden_states: int = None,
-        custom_layers_config: Optional[dict] = None,
-        enable_early_exit: bool = False,
         **flash_attn_kwargs: Unpack[FlashAttentionKwargs],
     ):
 
@@ -1348,17 +1346,8 @@ class AceStepDiTModel(AceStepPreTrainedModel):
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
         all_cross_attentions = () if output_attentions else None
 
-        # Handle early exit for custom layer configurations
-        max_needed_layer = float('inf')
-        if custom_layers_config is not None and enable_early_exit:
-            max_needed_layer = max(custom_layers_config.keys())
-            # Force output_attentions to True when early exit is enabled for attention extraction
-            output_attentions = True
-            if all_cross_attentions is None:
-                all_cross_attentions = ()
-
         # Process through transformer layers
-        for index_block, layer_module in enumerate(self.layers):
+        for layer_module in self.layers:
 
             layer_outputs = layer_module(
                 hidden_states,
@@ -1376,7 +1365,7 @@ class AceStepDiTModel(AceStepPreTrainedModel):
             )
             hidden_states = layer_outputs[0]
 
-            if output_attentions and self.layers[index_block].use_cross_attention:
+            if output_attentions and layer_module.use_cross_attention:
                 # layer_outputs structure: (hidden_states, self_attn_weights, cross_attn_weights)
                 # Extract the last element which is cross_attn_weights
                 if len(layer_outputs) >= 3:

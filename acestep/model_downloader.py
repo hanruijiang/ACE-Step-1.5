@@ -439,12 +439,15 @@ def download_all_models(
     if not success:
         all_success = False
     
-    # Download all sub-models
     for model_name in SUBMODEL_REGISTRY:
         success, msg = download_submodel(model_name, checkpoints_dir, force, token)
         messages.append(msg)
-        if not success:
-            all_success = False
+        all_success &= success
+
+    for vae_variant in VAE_REGISTRY:
+        success, msg = download_vae(vae_variant, checkpoints_dir, force, token)
+        messages.append(msg)
+        all_success &= success
     
     return all_success, messages
 
@@ -800,6 +803,8 @@ Alternative using hf:
     if args.model:
         if args.model == "main":
             success, msg = download_main_model(checkpoints_dir, args.force, args.token)
+        elif args.model in VAE_REGISTRY:
+            success, msg = download_vae(args.model, checkpoints_dir, args.force, args.token)
         elif args.model in SUBMODEL_REGISTRY:
             # Download main model first if needed (unless --skip-main)
             if not args.skip_main and not check_main_model_exists(checkpoints_dir):

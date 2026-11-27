@@ -148,13 +148,9 @@ class ServiceGenerateExecuteMixin:
         payload: Dict[str, Any],
         generate_kwargs: Dict[str, Any],
         seed_param: Any,
-        infer_method: str,
-        shift: float,
-        audio_cover_strength: float,
-        retake_seed: Any = None,
-        retake_variance: float = 0.0,
         flow_edit_ctx: Optional[Dict[str, Any]] = None,
-    ) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor]:
+        return_intermediate: bool = False,
+    ) -> Tuple[Dict[str, Any], Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
         """Execute condition preparation and PyTorch diffusion."""
         generate_kwargs = {
             **generate_kwargs,
@@ -166,10 +162,13 @@ class ServiceGenerateExecuteMixin:
             return dispatch_flow_edit_overlay(
                 self, payload=payload, generate_kwargs=generate_kwargs,
                 seed_param=seed_param, flow_edit_ctx=flow_edit_ctx,
+                return_intermediate=return_intermediate,
             )
         logger.info(f"[service_generate] Generating audio with PyTorch ({self.device})")
         with torch.inference_mode():
             with self._load_model_context("model"):
+                if not return_intermediate:
+                    return self.model.generate_audio(**generate_kwargs), None, None, None
                 encoder_hidden_states, encoder_attention_mask, context_latents = self.model.prepare_condition(
                     text_hidden_states=payload["text_hidden_states"],
                     text_attention_mask=payload["text_attention_mask"],

@@ -141,10 +141,8 @@ class ServiceGenerateMixinTests(unittest.TestCase):
         self.assertEqual(build_kwargs["timesteps"], custom_timesteps)
         self.assertIsNone(build_kwargs["dcw_enabled"])
         self.assertFalse(host.calls["_attach_service_generate_outputs"]["return_intermediate"])
-        execute_kwargs = host.calls["_execute_service_generate_diffusion"]
-        self.assertEqual(execute_kwargs["infer_method"], "sde")
-        self.assertEqual(execute_kwargs["shift"], 1.3)
-        self.assertEqual(execute_kwargs["audio_cover_strength"], 0.7)
+        self.assertEqual(build_kwargs["infer_method"], "sde")
+        self.assertEqual(build_kwargs["shift"], 1.3)
 
 
 if __name__ == "__main__":

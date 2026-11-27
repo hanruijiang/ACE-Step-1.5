@@ -1,14 +1,4 @@
-"""Build the *source* text/lyric conditioning for flow-edit overlay (#1156).
-
-The user's ``caption`` / ``lyrics`` go through the regular cover dispatch
-and become the *target* condition.  Flow-edit overlay also needs a
-*source* condition (``flow_edit_source_caption`` /
-``flow_edit_source_lyrics``) describing the original audio so we can
-compute V_delta = V_tar - V_src.  We tokenize and encode that source
-side here using the handler's existing helpers so SFT prompt formatting,
-lyric-language handling, and padding stay consistent with the target
-side.
-"""
+"""Tokenize and embed the source caption and lyrics for FlowEdit."""
 
 from __future__ import annotations
 

@@ -2,7 +2,6 @@
 
 from typing import Any, Dict
 
-from acestep.gpu_config import get_global_gpu_config
 from loguru import logger
 
 
@@ -28,7 +27,7 @@ class GenerateMusicPayloadMixin:
             pred_wavs: Decoded waveform tensor shaped ``[batch, channels, samples]``.
             pred_latents_cpu: CPU latent tensor preserved for extra outputs.
             time_costs: Updated time-cost payload including decode/offload timings.
-            seed_value_for_ui: Seed value displayed in UI outputs.
+            seed_value_for_ui: Seeds used for generation.
             actual_batch_size: Effective generation batch size.
             progress: Optional progress callback.
 
@@ -39,12 +38,7 @@ class GenerateMusicPayloadMixin:
         if progress:
             progress(0.99, desc="Preparing audio data...")
 
-        audio_tensors = []
-        for index in range(actual_batch_size):
-            audio_tensor = pred_wavs[index].cpu()
-            audio_tensors.append(audio_tensor)
-        # Free the GPU waveform tensor now that all per-sample CPU copies are done.
-        del pred_wavs
+        audio_tensors = [pred_wavs[index].cpu() for index in range(actual_batch_size)]
 
         status_message = "Generation completed successfully!"
         logger.info(f"[generate_music] Done! Generated {len(audio_tensors)} audio tensors.")
@@ -56,7 +50,7 @@ class GenerateMusicPayloadMixin:
             "retake_seed_value": retake_seed_value_for_ui,
             "retake_variance": retake_variance,
         }
-        if not get_global_gpu_config().save_memory_mode:
+        if pred_latents_cpu is not None:
             extra_outputs["pred_latents"] = pred_latents_cpu
 
         audios = []

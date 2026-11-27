@@ -22,7 +22,7 @@ from torch import nn
 
 from einops import rearrange
 
-from transformers.cache_utils import Cache, DynamicCache, EncoderDecoderCache
+from transformers.cache_utils import DynamicCache, EncoderDecoderCache
 from transformers.utils import logging
 
 
@@ -37,13 +37,10 @@ from acestep.models.common.dcw_correction import DCWCorrector
 logger = logging.get_logger(__name__)
 
 from acestep.models.common.modeling_layers import (
-    create_4d_mask,
     AceStepPreTrainedModel,
     AudioTokenDetokenizer,
     _repaint_step_injection,
     _repaint_boundary_blend,
-    pack_sequences,
-    XLAceStepTimbreEncoder as AceStepTimbreEncoder,
     XLAceStepAudioTokenizer as AceStepAudioTokenizer,
     XLAceStepDiTModel as AceStepDiTModel,
     XLAceStepConditionEncoder as AceStepConditionEncoder,
@@ -168,7 +165,6 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         Returns:
             Noise tensor of appropriate shape
         """
-        bsz = context_latents.shape[0]
         device = context_latents.device
         dtype = context_latents.dtype
         # Handle seed: can be int, List[int], or None
@@ -269,15 +265,7 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
         dcw_scaler: float = 0.05,
         dcw_high_scaler: float = 0.02,
         dcw_wavelet: str = "haar",
-        # --- CFG-related params accepted for API parity but unused on turbo.
-        # Turbo models bake classifier-free guidance into the distillation
-        # weights and do NOT run a twin unconditional forward pass.  Handlers
-        # upstream already force guidance_scale=1.0 before it reaches us (see
-        # `AceStepHandler.generate_music`), and the other CFG knobs have
-        # no corresponding code path in this sampler.  We declare them
-        # explicitly so they don't disappear into `**kwargs` silently, and
-        # log an info when a caller sets a non-default value so it's visible
-        # that the knob is intentionally a no-op here.
+        # Turbo uses distilled guidance.
         diffusion_guidance_scale: float = 1.0,
         use_adg: bool = False,
         cfg_interval_start: float = 0.0,
@@ -343,10 +331,7 @@ class AceStepConditionGenerationModel(AceStepPreTrainedModel):
                 
                 t_schedule_list = mapped_timesteps
 
-        # Variable-step schedule: respect `infer_steps` (UI exposes 1–20).
-        # Mirrors the base model's `torch.linspace` + shift transform so users
-        # can trade quality for speed on turbo models too.  Only fires when
-        # the caller did NOT pass an explicit `timesteps` list.
+        # Build a schedule from the requested number of steps.
         if t_schedule_list is None and infer_steps is not None and infer_steps > 0:
             n = min(int(infer_steps), 20)
             if n != int(infer_steps):

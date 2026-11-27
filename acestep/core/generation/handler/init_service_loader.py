@@ -1,6 +1,5 @@
 """Checkpoint and model-loading helpers for service initialization."""
 
-import importlib
 import os
 from typing import Optional
 
@@ -13,66 +12,6 @@ from .init_service_loader_components import InitServiceLoaderComponentsMixin
 
 class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
     """Helpers for heavy model component loading."""
-
-    def _cuda_supports_bool_argsort(self) -> bool:
-        """Return whether CUDA argsort supports bool tensors on the active device."""
-        if not torch.cuda.is_available():
-            return True
-        target_device = str(getattr(self, "device", "cuda"))
-        if not target_device.startswith("cuda"):
-            target_device = "cuda"
-        try:
-            mask_cat = torch.tensor([[True, False]], device=target_device)
-            _ = mask_cat.argsort(dim=1, descending=True, stable=True)
-            return True
-        except RuntimeError as exc:
-            logger.debug(
-                "[_cuda_supports_bool_argsort] Treating CUDA bool argsort probe failure as unsupported: {}",
-                exc,
-            )
-            return False
-
-    def _apply_cuda_bool_argsort_workaround(self) -> None:
-        """Patch dynamic model helpers when bool argsort is unsupported on CUDA."""
-        target_device = str(getattr(self, "device", ""))
-        if not target_device.startswith("cuda"):
-            return
-        model_module_name = getattr(self.model.__class__, "__module__", "")
-        if not model_module_name:
-            return
-
-        try:
-            model_module = importlib.import_module(model_module_name)
-        except Exception as exc:
-            logger.warning(
-                "[initialize_service] Failed to import model module for CUDA bool-argsort workaround: {}",
-                exc,
-            )
-            return
-
-        original_pack_sequences = getattr(model_module, "pack_sequences", None)
-        if original_pack_sequences is None or original_pack_sequences.__module__ == "acestep.models.common.modeling_layers":
-            return
-        if self._cuda_supports_bool_argsort():
-            return
-        if getattr(original_pack_sequences, "__acestep_bool_argsort_patched__", False):
-            return
-
-        def _pack_sequences_cuda_compat(hidden1, hidden2, mask1, mask2):
-            # ``pack_sequences`` only needs sortable integer-like masks here; keep
-            # truthy/falsey semantics while avoiding CUDA bool argsort failures.
-            if isinstance(mask1, torch.Tensor) and mask1.is_cuda and mask1.dtype == torch.bool:
-                mask1 = mask1.to(torch.int32)
-            if isinstance(mask2, torch.Tensor) and mask2.is_cuda and mask2.dtype == torch.bool:
-                mask2 = mask2.to(torch.int32)
-            return original_pack_sequences(hidden1, hidden2, mask1, mask2)
-
-        _pack_sequences_cuda_compat.__acestep_bool_argsort_patched__ = True
-        setattr(model_module, "pack_sequences", _pack_sequences_cuda_compat)
-        logger.warning(
-            "[initialize_service] Applied CUDA bool-argsort workaround to {}.pack_sequences",
-            model_module_name,
-        )
 
     @staticmethod
     def _build_quantization_config(quantization: str):
@@ -179,16 +118,9 @@ class InitServiceLoaderMixin(InitServiceLoaderComponentsMixin):
 
         self.model.config._attn_implementation = attn_implementation
         self.config = self.model.config
-        self._apply_cuda_bool_argsort_workaround()
 
-        if not self.offload_to_cpu:
-            self.model = self.model.to(device).to(self.dtype)
-        elif not self.offload_dit_to_cpu:
-            logger.info(f"[initialize_service] Keeping main model on {device} (persistent)")
-            self.model = self.model.to(device).to(self.dtype)
-        else:
-            self.model = self.model.to("cpu").to(self.dtype)
-        self.model.eval()
+        model_device = "cpu" if self.offload_to_cpu and self.offload_dit_to_cpu else device
+        self.model.to(device=model_device, dtype=self.dtype).eval()
 
         if compile_model:
             self._ensure_len_for_compile(self.model, "model")

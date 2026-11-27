@@ -521,44 +521,6 @@ class InitServiceMixinTests(unittest.TestCase):
         self.assertIsNotNone(host.model)
         self.assertIsNotNone(host.silence_latent)
 
-    def test_apply_cuda_bool_argsort_workaround_patches_pack_sequences(self):
-        """It monkey-patches dynamic ``pack_sequences`` when CUDA bool argsort is unsupported."""
-        host = _Host(project_root="K:/fake_root", device="cuda")
-
-        class _DummyModel:
-            """Model stub exposing a dynamic module path."""
-
-        _DummyModel.__module__ = "dummy_cuda_pack_module"
-        host.model = _DummyModel()
-
-        def _pack_sequences(_h1, _h2, _m1, _m2):
-            """Original no-op function used for patch detection."""
-            return "ok"
-
-        dummy_module = types.SimpleNamespace(pack_sequences=_pack_sequences)
-
-        with patch.object(host, "_cuda_supports_bool_argsort", return_value=False), \
-                patch.object(INIT_SERVICE_LOADER_MODULE.importlib, "import_module", return_value=dummy_module):
-            host._apply_cuda_bool_argsort_workaround()
-
-        self.assertIsNot(dummy_module.pack_sequences, _pack_sequences)
-        self.assertTrue(getattr(dummy_module.pack_sequences, "__acestep_bool_argsort_patched__", False))
-
-    def test_cuda_supports_bool_argsort_returns_false_for_unexpected_runtime_error(self):
-        """It treats any CUDA bool argsort RuntimeError as unsupported."""
-        host = _Host(project_root="K:/fake_root", device="cuda")
-        mask_cat = Mock()
-        mask_cat.argsort.side_effect = RuntimeError("unexpected argsort failure")
-
-        with patch("torch.cuda.is_available", return_value=True), patch(
-            "torch.tensor",
-            return_value=mask_cat,
-        ):
-            self.assertFalse(host._cuda_supports_bool_argsort())
-
-        mask_cat.argsort.assert_called_once_with(dim=1, descending=True, stable=True)
-
-
     def test_apply_dit_quantization_filters_to_decoder_linear_layers(self):
         """It quantizes only decoder-side linear layers."""
         host = _Host(project_root="K:/fake_root", device="cpu")
@@ -687,7 +649,7 @@ class InitServiceMixinTests(unittest.TestCase):
         model = torch.nn.Linear(2, 2)
 
         def _raise_not_implemented(*_args, **_kwargs):
-            """Simulate older torch behavior for quantized tensor moves."""
+            """Simulate a quantized tensor that requires individual transfer."""
             raise NotImplementedError("no shallow copy")
 
         model.to = _raise_not_implemented  # type: ignore[assignment]

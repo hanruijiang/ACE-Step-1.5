@@ -1,4 +1,4 @@
-"""Unit tests for the flow-edit overlay dispatch (#1156).
+"""Unit tests for FlowEdit dispatch.
 
 The overlay is a sampler-level technique layered on cover/cover-nofsq:
 the user's ``caption`` / ``lyrics`` are the *target*; the overlay adds a
@@ -60,6 +60,7 @@ class FlowEditOverlayDispatchTests(unittest.TestCase):
         outputs, enc_hs, enc_am, ctx = dispatch_flow_edit_overlay(
             handler, payload=make_payload(), generate_kwargs={"infer_steps": 4},
             seed_param=None, flow_edit_ctx=make_flow_edit_ctx(),
+            return_intermediate=True,
         )
         self.assertIn("target_latents", outputs)
         self.assertIs(enc_hs, handler.prepared_enc_hs)
@@ -128,21 +129,6 @@ class FlowEditOverlayDispatchTests(unittest.TestCase):
         kwargs = handler.model.flowedit_generate_audio.call_args.kwargs
         self.assertEqual(kwargs["seed"], 42)
         self.assertEqual(kwargs["retake_seed"], [99, 100])
-
-
-class CoverStillRunsLmTests(unittest.TestCase):
-    """The overlay layers on cover; cover stays in skip_lm_tasks (LM Phase 1
-    skipped because cover already extracts codes from the ref audio)."""
-
-    def test_no_edit_in_skip_lm_tasks(self):
-        from pathlib import Path
-        src = (Path(__file__).resolve().parents[3] / "inference.py").read_text()
-        self.assertIn(
-            'skip_lm_tasks = {"cover", "cover-nofsq", "repaint", "extract"}',
-            src,
-            "edit task is removed; skip_lm_tasks should no longer mention it",
-        )
-        self.assertNotIn('"edit"', src.split("skip_lm_tasks")[1].split("\n")[0])
 
 
 if __name__ == "__main__":

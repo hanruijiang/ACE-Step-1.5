@@ -147,13 +147,6 @@ class ServiceGenerateMixin:
             retake_seed=retake_seed,
             retake_variance=retake_variance,
         )
-        # flow_edit_ctx activates the V_delta overlay.  Supported on
-        # text2music (silence-derived context, clean text-driven V_delta)
-        # and cover / cover-nofsq (cover's LM-codes context shared by both
-        # branches, V_delta still text-driven because the codes are the
-        # same on both sides). Repaint / extract / lego have task-shape-
-        # specific conditioning that needs paired-CFG derivation — left
-        # for follow-up.
         flow_edit_ctx = {
             "morph": flow_edit_morph and task_type in ("text2music", "cover", "cover-nofsq"),
             "task_type": task_type,
@@ -169,9 +162,8 @@ class ServiceGenerateMixin:
         outputs, encoder_hidden_states, encoder_attention_mask, context_latents = (
             self._execute_service_generate_diffusion(
                 payload=payload, generate_kwargs=generate_kwargs, seed_param=seed_param,
-                infer_method=infer_method, shift=shift, audio_cover_strength=audio_cover_strength,
-                retake_seed=retake_seed, retake_variance=retake_variance,
                 flow_edit_ctx=flow_edit_ctx,
+                return_intermediate=normalized["return_intermediate"],
             )
         )
         return self._attach_service_generate_outputs(

@@ -2,9 +2,8 @@
 
 import os
 import tempfile
-import types
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import numpy as np
 import torch
@@ -37,7 +36,7 @@ class ReadAudioFileTests(unittest.TestCase):
         finally:
             os.unlink(tmp.name)
 
-    def test_falls_back_to_torchaudio_on_soundfile_failure(self):
+    def test_falls_back_to_ffmpeg_on_soundfile_failure(self):
         """When soundfile fails, FFmpeg should be tried."""
         fake_waveform = torch.randn(1, 44100)
 
@@ -73,18 +72,6 @@ class IoAudioMixinTests(unittest.TestCase):
         self.assertEqual(tuple(result.shape), (2, 3))
         self.assertTrue(torch.all(result <= 1.0))
         self.assertTrue(torch.all(result >= -1.0))
-
-    def test_process_target_audio_loads_and_normalizes(self):
-        """Target audio should be loaded and normalized through helper."""
-        host = _Host()
-        fake_np = np.array([0.1, -0.1, 0.2], dtype=np.float32)
-
-        with patch("acestep.core.generation.handler.io_audio._read_audio_file", return_value=(fake_np, 48000)):
-            with patch.object(host, "_normalize_audio_to_stereo_48k", return_value=torch.zeros(2, 3)) as norm:
-                result = host.process_target_audio("fake.wav")
-
-        self.assertIsNotNone(result)
-        norm.assert_called_once()
 
     def test_process_src_audio_handles_load_error(self):
         """Source audio processing should return None on load failure."""

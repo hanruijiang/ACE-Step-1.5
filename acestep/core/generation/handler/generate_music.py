@@ -1,8 +1,4 @@
-"""Top-level ``generate_music`` orchestration mixin.
-
-This module provides the public ``generate_music`` entry point extracted from
-``AceStepHandler`` so orchestration stays separate from lower-level helpers.
-"""
+"""Generate and decode music from prepared inputs."""
 
 import gc
 import os
@@ -21,32 +17,25 @@ from acestep.gpu_config import (
     VRAM_SAFETY_MARGIN_GB,
     get_dit_type_from_path,
     get_effective_free_vram_gb,
+    get_global_gpu_config,
 )
 
 
 def _resolve_repaint_config(
     mode: str = "balanced",
     strength: float = 0.5,
-) -> tuple:
-    """Convert repaint mode and strength into concrete numeric parameters.
-
-    Higher *strength* means more aggressive repainting (less source preservation).
-
-    Args:
-        mode: One of ``"conservative"``, ``"balanced"``, or ``"aggressive"``.
-        strength: 0.0 = conservative (max preservation), 1.0 = aggressive
-            (pure diffusion).  Only effective in balanced mode.
-
-    Returns:
-        Tuple of ``(injection_ratio, crossfade_frames, wav_crossfade_sec)``.
-    """
-    strength = max(0.0, min(1.0, strength))
+    crossfade_frames: Optional[int] = None,
+    wav_crossfade_sec: Optional[float] = None,
+) -> tuple[float, int, float]:
+    """Resolve source injection and crossfades for the selected repaint mode."""
     if mode == "aggressive":
         return 0.0, 0, 0.0
-    if mode == "conservative":
-        return 1.0, 25, 0.05
-    inv = 1.0 - strength
-    return inv, round(25 * inv), 0.05 * inv
+    injection_ratio = 1.0 if mode == "conservative" else 1.0 - max(0.0, min(1.0, strength))
+    return (
+        injection_ratio,
+        round(25 * injection_ratio) if crossfade_frames is None else crossfade_frames,
+        0.05 * injection_ratio if wav_crossfade_sec is None else wav_crossfade_sec,
+    )
 
 
 class GenerateMusicMixin:
@@ -187,8 +176,8 @@ class GenerateMusicMixin:
         latent_shift: float = 0.0,
         latent_rescale: float = 1.0,
         chunk_mask_mode: str = "auto",
-        repaint_latent_crossfade_frames: int = 10,
-        repaint_wav_crossfade_sec: float = 0.0,
+        repaint_latent_crossfade_frames: Optional[int] = None,
+        repaint_wav_crossfade_sec: Optional[float] = None,
         repaint_mode: str = "balanced",
         repaint_strength: float = 0.5,
         source_repaint_latents: Optional[torch.Tensor] = None,
@@ -201,6 +190,7 @@ class GenerateMusicMixin:
         flow_edit_n_max: float = 1.0,
         flow_edit_n_avg: int = 1,
         progress=None,
+        return_latents: bool = True,
     ) -> Dict[str, Any]:
         """Generate audio from text/reference inputs and return response payload.
 
@@ -354,8 +344,9 @@ class GenerateMusicMixin:
                     if vram_error is not None:
                         return vram_error
 
-            injection_ratio, resolved_cf_frames, resolved_wav_cf = (
-                _resolve_repaint_config(repaint_mode, repaint_strength)
+            injection_ratio, resolved_cf_frames, resolved_wav_cf = _resolve_repaint_config(
+                repaint_mode, repaint_strength,
+                repaint_latent_crossfade_frames, repaint_wav_crossfade_sec,
             )
 
             service_run = self._run_generate_music_service(
@@ -408,6 +399,7 @@ class GenerateMusicMixin:
                 progress=progress,
                 use_tiled_decode=use_tiled_decode,
                 time_costs=time_costs,
+                return_latents=return_latents and not get_global_gpu_config().save_memory_mode,
             )
             repainting_start_batch = service_inputs.get("repainting_start_batch")
             repainting_end_batch = service_inputs.get("repainting_end_batch")
@@ -436,17 +428,7 @@ class GenerateMusicMixin:
                 retake_seed_value_for_ui=retake_seed_value_for_ui,
                 retake_variance=retake_variance,
             )
-            # Clear GPU tensor references from the mutable outputs dict so
-            # accelerator memory is reclaimable before the next generation.
-            _gpu_keys = (
-                "src_latents", "target_latents_input", "chunk_masks",
-                "latent_masks", "encoder_hidden_states",
-                "encoder_attention_mask", "context_latents",
-                "lyric_token_idss",
-            )
-            for _k in _gpu_keys:
-                outputs.pop(_k, None)
-            del outputs, pred_wavs, pred_latents_cpu
+            del outputs, pred_latents, pred_wavs, pred_latents_cpu
             gc.collect()
             self._empty_cache()
             return result

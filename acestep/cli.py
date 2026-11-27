@@ -6,40 +6,21 @@ import sys
 import shutil
 import toml
 import yaml
+from dotenv import load_dotenv
+from loguru import logger
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-# Load environment variables from .env or .env.example (if available)
-try:
-    from dotenv import load_dotenv
-    _project_root = str(Path(__file__).resolve().parent.parent)
-    if not os.path.isfile(os.path.join(_project_root, 'pyproject.toml')):
-        _project_root = os.getcwd()
-    _env_path = os.path.join(_project_root, '.env')
-    _env_example_path = os.path.join(_project_root, '.env.example')
+_env_dir = Path(__file__).resolve().parent.parent
+if not (_env_dir / "pyproject.toml").is_file():
+    _env_dir = Path.cwd()
+load_dotenv(_env_dir / ".env")
 
-    if os.path.exists(_env_path):
-        load_dotenv(_env_path)
-        print(f"Loaded configuration from {_env_path}")
-    elif os.path.exists(_env_example_path):
-        load_dotenv(_env_example_path)
-        print(f"Loaded configuration from {_env_example_path} (fallback)")
-except ImportError:
-    pass
-
-# Clear proxy settings that may affect network behavior
-for _proxy_var in ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY']:
-    os.environ.pop(_proxy_var, None)
 
 def _configure_logging(
     level: Optional[str] = None,
     suppress_audio_tokens: Optional[bool] = None,
 ) -> None:
-    try:
-        from loguru import logger
-    except Exception:
-        return
-
     if suppress_audio_tokens is None:
         suppress_audio_tokens = os.environ.get("ACE_STEP_SUPPRESS_AUDIO_TOKENS", "1") not in {"0", "false", "False"}
     if level is None:
@@ -69,7 +50,7 @@ from acestep.handler import AceStepHandler
 from acestep.llm_inference import LLMHandler
 from acestep.inference import GenerationParams, GenerationConfig, generate_music, create_sample, format_sample, DIRECT_CONDITIONING_TASKS
 from acestep.constants import DEFAULT_DIT_INSTRUCTION, TASK_INSTRUCTIONS, TASK_TYPES
-from acestep.gpu_config import get_gpu_config, set_global_gpu_config, is_mps_platform
+from acestep.gpu_config import get_global_gpu_config, is_mps_platform
 import torch
 
 
@@ -241,16 +222,13 @@ def _extract_caption_lyrics_from_formatted_prompt(formatted_prompt: str) -> Tupl
             cut_at = min(cut_at, pos)
     lyrics = lyrics[:cut_at].rstrip()
 
-    return caption or None, lyrics or None
+    return caption or None, lyrics
 
 
 def _extract_instruction_from_formatted_prompt(formatted_prompt: str) -> Optional[str]:
     """Extract instruction text from a formatted prompt."""
     match = re.search(r"# Instruction\n(.*?)\n\n", formatted_prompt, re.DOTALL)
-    if not match:
-        return None
-    instruction = match.group(1).strip()
-    return instruction or None
+    return (match.group(1).strip() or None) if match else None
 
 
 def _extract_cot_metadata_from_formatted_prompt(formatted_prompt: str) -> dict:
@@ -425,50 +403,10 @@ def _default_instruction_for_task(task_type: str, tracks: Optional[List[str]] = 
     return DEFAULT_DIT_INSTRUCTION
 
 
-def _apply_optional_defaults(args, params_defaults: GenerationParams, config_defaults: GenerationConfig) -> None:
-    optional_defaults = {
-        "duration": params_defaults.duration,
-        "bpm": params_defaults.bpm,
-        "keyscale": params_defaults.keyscale,
-        "timesignature": params_defaults.timesignature,
-        "vocal_language": params_defaults.vocal_language,
-        "inference_steps": params_defaults.inference_steps,
-        "seed": params_defaults.seed,
-        "guidance_scale": params_defaults.guidance_scale,
-        "use_adg": params_defaults.use_adg,
-        "cfg_interval_start": params_defaults.cfg_interval_start,
-        "cfg_interval_end": params_defaults.cfg_interval_end,
-        "shift": 3.0,
-        "infer_method": params_defaults.infer_method,
-        "timesteps": None,
-        "repainting_start": params_defaults.repainting_start,
-        "repainting_end": params_defaults.repainting_end,
-        "audio_cover_strength": params_defaults.audio_cover_strength,
-        "thinking": params_defaults.thinking,
-        "lm_temperature": params_defaults.lm_temperature,
-        "lm_cfg_scale": params_defaults.lm_cfg_scale,
-        "lm_top_k": params_defaults.lm_top_k,
-        "lm_top_p": params_defaults.lm_top_p,
-        "lm_negative_prompt": params_defaults.lm_negative_prompt,
-        "use_cot_metas": params_defaults.use_cot_metas,
-        "use_cot_caption": params_defaults.use_cot_caption,
-        "use_cot_lyrics": params_defaults.use_cot_lyrics,
-        "use_cot_language": params_defaults.use_cot_language,
-        "use_constrained_decoding": params_defaults.use_constrained_decoding,
-        "batch_size": config_defaults.batch_size,
-        "use_random_seed": config_defaults.use_random_seed,
-        "seeds": config_defaults.seeds,
-        "lm_batch_chunk_size": config_defaults.lm_batch_chunk_size,
-        "constrained_decoding_debug": config_defaults.constrained_decoding_debug,
-        "audio_format": config_defaults.audio_format,
-        "sample_mode": False,
-        "sample_query": "",
-        "use_format": False,
-    }
-
-    for key, default_value in optional_defaults.items():
-        if getattr(args, key, None) is None:
-            setattr(args, key, default_value)
+def _resolve_cot_defaults(args) -> None:
+    for key in ("use_cot_metas", "use_cot_caption", "use_cot_language"):
+        if getattr(args, key) is None:
+            setattr(args, key, args.thinking)
 
 
 def _summarize_lyrics(lyrics: Optional[str]) -> str:
@@ -491,7 +429,6 @@ def _print_final_parameters(
     params: GenerationParams,
     config: GenerationConfig,
     params_defaults: GenerationParams,
-    config_defaults: GenerationConfig,
     compact: bool,
     resolved_device: Optional[str] = None,
 ) -> None:
@@ -570,9 +507,7 @@ def _print_dit_prompt(dit_handler: "AceStepHandler", params: GenerationParams) -
     print("----------------------------------------\n")
 
 
-def run_wizard(args, configure_only: bool = False, default_config_path: Optional[str] = None,
-               params_defaults: Optional[GenerationParams] = None,
-               config_defaults: Optional[GenerationConfig] = None):
+def run_wizard(args, configure_only: bool = False, default_config_path: Optional[str] = None):
     """
     Runs an interactive wizard to set generation parameters.
     """
@@ -638,7 +573,7 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
             if selected is not None:
                 args.config_path = selected
         else:
-            print("\nNote: No local DiT models found. The main model will be auto-downloaded during initialization.")
+            print("\nNote: No local DiT models found. The selected model will be downloaded during initialization.")
 
         # Model selection (LM)
         llm_handler = LLMHandler()
@@ -828,10 +763,13 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
             args.lm_top_k = _prompt_int("LM top-k (0 disables)", args.lm_top_k, min_value=0)
             args.lm_top_p = _prompt_float("LM top-p (0.0-1.0)", args.lm_top_p, 0.0, 1.0)
             args.lm_negative_prompt = _prompt_with_default("LM negative prompt", args.lm_negative_prompt)
-            args.use_cot_metas = _prompt_bool("Use CoT for metadata", args.use_cot_metas)
-            args.use_cot_caption = _prompt_bool("Use CoT for caption refinement", args.use_cot_caption)
+            default = args.thinking if args.use_cot_metas is None else args.use_cot_metas
+            args.use_cot_metas = _prompt_bool("Use CoT for metadata", default)
+            default = args.thinking if args.use_cot_caption is None else args.use_cot_caption
+            args.use_cot_caption = _prompt_bool("Use CoT for caption refinement", default)
             args.use_cot_lyrics = _prompt_bool("Use CoT for lyrics generation", args.use_cot_lyrics)
-            args.use_cot_language = _prompt_bool("Use CoT for language detection", args.use_cot_language)
+            default = args.thinking if args.use_cot_language is None else args.use_cot_language
+            args.use_cot_language = _prompt_bool("Use CoT for language detection", default)
             args.use_constrained_decoding = _prompt_bool("Use constrained decoding", args.use_constrained_decoding)
 
             print("\n--- Output Settings ---")
@@ -852,14 +790,11 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
                     print("Invalid seeds input. Ignoring custom seeds.")
             args.lm_batch_chunk_size = _prompt_int("LM batch chunk size", args.lm_batch_chunk_size, min_value=1)
             args.constrained_decoding_debug = _prompt_bool("Constrained decoding debug", args.constrained_decoding_debug)
-        else:
-            if params_defaults and config_defaults:
-                _apply_optional_defaults(args, params_defaults, config_defaults)
-
-        # Ensure LM thinking is enabled when lyric generation is requested.
+        # Enable thinking when the wizard requests automatic lyrics.
         if args.use_cot_lyrics and not args.thinking:
             print("INFO: Automatic lyric generation requires the LM handler. Enabling LM 'thinking'.")
             args.thinking = True
+        _resolve_cot_defaults(args)
 
         print("\n--- Summary ---")
         print(f"Task: {args.task_type}")
@@ -942,8 +877,7 @@ def main():
     """
 
     _configure_cpu_threads_if_requested()
-    gpu_config = get_gpu_config()
-    set_global_gpu_config(gpu_config)
+    gpu_config = get_global_gpu_config()
     mps_available = is_mps_platform()
     # Mac (Apple Silicon) uses unified memory — offloading provides no benefit
     auto_offload = (not mps_available) and gpu_config.gpu_memory_gb > 0 and gpu_config.gpu_memory_gb < 16
@@ -1038,10 +972,10 @@ def main():
         "lm_cfg_scale": params_defaults.lm_cfg_scale,
         "lm_top_k": params_defaults.lm_top_k,
         "lm_top_p": params_defaults.lm_top_p,
-        "use_cot_metas": params_defaults.use_cot_metas,
-        "use_cot_caption": params_defaults.use_cot_caption,
+        "use_cot_metas": None,
+        "use_cot_caption": None,
         "use_cot_lyrics": params_defaults.use_cot_lyrics,
-        "use_cot_language": params_defaults.use_cot_language,
+        "use_cot_language": None,
         "use_constrained_decoding": params_defaults.use_constrained_decoding,
         "batch_size": default_batch_size,
         "seeds": None,
@@ -1122,8 +1056,6 @@ def main():
             args,
             configure_only=True,
             default_config_path=cli_args.config,
-            params_defaults=params_defaults,
-            config_defaults=config_defaults,
         )
         print("Configuration complete. Exiting without generation.")
         sys.exit(0)
@@ -1133,27 +1065,18 @@ def main():
             args,
             configure_only=False,
             default_config_path=None,
-            params_defaults=params_defaults,
-            config_defaults=config_defaults,
         )
         if not should_generate:
             print("Configuration complete. Exiting without generation.")
             sys.exit(0)
 
-    # --- Post-parsing Setup ---
+    _resolve_cot_defaults(args)
+    if args.lyrics == "generate":
+        args.lyrics = ""
+        args.use_cot_lyrics = True
     if args.use_cot_lyrics and not args.thinking:
         print("INFO: Automatic lyric generation requires the LM handler. Forcing --thinking=True.")
         args.thinking = True
-    
-    if not args.project_root:
-        args.project_root = _get_project_root()
-    else:
-        args.project_root = os.path.abspath(os.path.expanduser(str(args.project_root)))
-
-    if args.checkpoint_dir:
-        args.checkpoint_dir = os.path.expanduser(str(args.checkpoint_dir))
-        if not os.path.isabs(args.checkpoint_dir):
-            args.checkpoint_dir = os.path.join(args.project_root, args.checkpoint_dir)
 
     if args.src_audio:
         args.src_audio = _expand_audio_path(args.src_audio)
@@ -1227,10 +1150,10 @@ def main():
         if not args.caption and not args.lyrics:
             if not args.sample_mode and not args.sample_query:
                 parser.error("--caption or --lyrics is required for text2music.")
-        if args.use_cot_lyrics and not args.caption:
-            parser.error("--use_cot_lyrics requires --caption for lyric generation.")
         if args.sample_mode or args.sample_query:
             args.sample_mode = True
+        elif args.use_cot_lyrics and not args.caption:
+            parser.error("use_cot_lyrics requires a caption for lyric generation.")
     else:
         if args.sample_mode or args.sample_query:
             parser.error("--sample_mode/sample_query are only supported for task_type 'text2music'.")
@@ -1246,11 +1169,15 @@ def main():
 
     # Base-model-only task enforcement
     base_only_tasks = {"lego", "extract", "complete"}
-    if args.task_type in base_only_tasks and args.config_path:
+    if args.task_type in base_only_tasks and args.config_path is not None:
         if "base" not in str(args.config_path).lower():
             parser.error(f"task_type '{args.task_type}' requires a base model config (e.g., 'acestep-v15-base').")
 
     if args.task_type == "repaint":
+        if args.repaint_latent_crossfade_frames is not None and args.repaint_latent_crossfade_frames < 0:
+            parser.error("repaint_latent_crossfade_frames must be nonnegative.")
+        if args.repaint_wav_crossfade_sec is not None and args.repaint_wav_crossfade_sec < 0:
+            parser.error("repaint_wav_crossfade_sec must be nonnegative.")
         if args.repainting_end != -1 and args.repainting_end <= args.repainting_start:
             parser.error("--repainting_end must be greater than --repainting_start (or -1).")
 
@@ -1292,23 +1219,12 @@ def main():
             if resolved is not None:
                 lyrics_arg = resolved
 
-    if lyrics_arg is not None:
-        if lyrics_arg == "generate":
-            args.use_cot_lyrics = True
-            args.lyrics = ""
-            print("Lyrics generation enabled.")
-        elif os.path.isfile(lyrics_arg):
-            print(f"INFO: Attempting to load lyrics from file: {lyrics_arg}")
-            try:
-                with open(lyrics_arg, 'r', encoding='utf-8') as f:
-                    args.lyrics = f.read()
-                print(f"Lyrics loaded from file: {lyrics_arg}")
-            except Exception as e:
-                parser.error(f"Could not read lyrics file {lyrics_arg}. Error: {e}")
-        # else: lyrics is a string, use as is.
+    if lyrics_arg and os.path.isfile(lyrics_arg):
+        try:
+            args.lyrics = Path(lyrics_arg).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            parser.error(f"Could not read lyrics file {lyrics_arg}: {exc}")
 
-    if args.flow_edit_morph and args.use_cot_lyrics:
-        parser.error("FlowEdit requires explicit target lyrics; lyrics=generate is not supported.")
     from acestep.audio_utils import SUPPORTED_AUDIO_FORMATS
     args.audio_format = str(args.audio_format).lower()
     if args.audio_format not in SUPPORTED_AUDIO_FORMATS:
@@ -1322,7 +1238,6 @@ def main():
     llm_handler = LLMHandler()
     llm_handler.checkpoint_dir = args.checkpoint_dir
 
-    base_only_tasks = {"lego", "extract", "complete"}
     skip_lm_tasks = DIRECT_CONDITIONING_TASKS
     # Direct conditioning tasks do not need LM audio codes, but explicit
     # sample formatting or lyric generation can still use the LM beforehand.
@@ -1336,10 +1251,11 @@ def main():
 
     if args.config_path is None:
         available_models = dit_handler.get_available_acestep_v15_models()
-        if args.task_type in base_only_tasks and available_models:
-            available_models = [m for m in available_models if "base" in m.lower()]
+        preferred = "acestep-v15-turbo"
+        if args.task_type in base_only_tasks:
+            preferred = "acestep-v15-base"
+            available_models = [name for name in available_models if "base" in name.lower()]
         if not available_models:
-            preferred = "acestep-v15-base" if args.task_type in base_only_tasks else "acestep-v15-turbo"
             print(f"No compatible DiT models found. Downloading {preferred}...")
             from acestep.model_downloader import ensure_dit_model, get_checkpoints_dir
             checkpoints_dir = get_checkpoints_dir(args.checkpoint_dir)
@@ -1348,17 +1264,8 @@ def main():
             if not success:
                 parser.error(f"Failed to download DiT model: {msg}")
             available_models = [preferred]
-        if available_models:
-            if args.task_type in {"lego", "extract", "complete"}:
-                preferred = "acestep-v15-base"
-            else:
-                preferred = "acestep-v15-turbo"
-            args.config_path = preferred if preferred in available_models else available_models[0]
-            print(f"Auto-selected config_path: {args.config_path}")
-        else:
-            parser.error("No available DiT models found. Please specify --config_path.")
-    if args.task_type in {"lego", "extract", "complete"} and "base" not in str(args.config_path).lower():
-        parser.error(f"task_type '{args.task_type}' requires a base model config (e.g., 'acestep-v15-base').")
+        args.config_path = preferred if preferred in available_models else available_models[0]
+        print(f"Auto-selected config_path: {args.config_path}")
 
     # Component prechecks and downloads are owned by initialize_service.
     from acestep.model_downloader import get_checkpoints_dir, check_model_exists, SUBMODEL_REGISTRY, DEFAULT_LM_MODEL
@@ -1388,20 +1295,16 @@ def main():
     if requires_lm:
         from acestep.model_downloader import ensure_lm_model
         if args.lm_model_path is None:
-            available_lm_models = [name for name in llm_handler.get_available_5hz_lm_models() if check_model_exists(name, checkpoints_dir)]
+            available_lm_models = llm_handler.get_available_5hz_lm_models()
             if available_lm_models:
                 args.lm_model_path = available_lm_models[0]
-                print(f"Using default LM model: {args.lm_model_path}")
             else:
-                success, msg = ensure_lm_model(checkpoints_dir=checkpoints_dir)
-                print(msg)
+                success, msg = ensure_lm_model(DEFAULT_LM_MODEL, checkpoints_dir)
                 if not success:
-                    parser.error("No LM models available. Please specify --lm_model_path or disable --thinking.")
-                available_lm_models = llm_handler.get_available_5hz_lm_models()
-                if not available_lm_models:
-                    parser.error("No LM models available after download. Please specify --lm_model_path or disable --thinking.")
-                args.lm_model_path = available_lm_models[0]
-                print(f"Using default LM model: {args.lm_model_path}")
+                    parser.error(f"Failed to download LM model '{DEFAULT_LM_MODEL}': {msg}")
+                print(msg)
+                args.lm_model_path = DEFAULT_LM_MODEL
+            print(f"Using LM model: {args.lm_model_path}")
         else:
             lm_model_path = str(args.lm_model_path)
             if os.path.isabs(lm_model_path) and os.path.exists(lm_model_path):
@@ -1558,6 +1461,7 @@ def main():
             # Disable subsequent CoT steps to avoid redundancy and save time
             args.use_cot_metas = False
             args.use_cot_caption = False
+            args.use_cot_language = False
         else:
             print(f"⚠️ WARNING: Automatic lyric generation via 'create_sample' failed: {sample_result.error}")
             print("         Proceeding with an instrumental track instead.")
@@ -1569,6 +1473,8 @@ def main():
 
     if args.sample_mode or format_has_duration:
         args.use_cot_metas = False
+        args.use_cot_caption = False
+        args.use_cot_language = False
 
     # Optional audio-token prompt editing.
     prompt_editor = None
@@ -1672,7 +1578,6 @@ def main():
         params,
         config,
         params_defaults,
-        config_defaults,
         compact=compact_logs,
         resolved_device=device,
     )
@@ -1689,7 +1594,7 @@ def main():
         before_dit = lambda final_params: _print_dit_prompt(dit_handler, final_params)
     result = generate_music(
         dit_handler, llm_handler, params, config,
-        save_dir=args.save_dir, prompt_editor=prompt_editor, before_dit=before_dit,
+        save_dir=args.save_dir, prompt_editor=prompt_editor, before_dit=before_dit, return_latents=False,
     )
 
     # --- Process Results ---

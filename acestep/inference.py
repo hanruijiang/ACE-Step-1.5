@@ -17,13 +17,7 @@ import torch
 
 from acestep.audio_utils import AudioSaver, apply_fade, generate_uuid_from_params, normalize_audio
 
-# Task types conditioned directly on reference/source audio rather than on
-# LM-generated audio codes.  Two decisions must stay in lockstep for these:
-#   1. the LM is skipped entirely (its codes would pre-empt src_audio
-#      downstream in ``_prepare_reference_and_source_audio``), and
-#   2. caption/lyrics conditioning therefore has to come from ``params``,
-#      since no LM ran to produce them.
-# Keeping one set means a task added here can never be half-applied.
+# Tasks that condition directly on source audio.
 DIRECT_CONDITIONING_TASKS = frozenset(
     {"cover", "cover-nofsq", "repaint", "extract", "complete", "lego"}
 )
@@ -144,23 +138,15 @@ class GenerationParams:
     repainting_start: float = 0.0
     repainting_end: float = -1
     chunk_mask_mode: str = "auto"  # "explicit" = 0/1 mask from repaint range; "auto" = all 2.0 (model decides)
-    repaint_latent_crossfade_frames: int = 10  # latent-level boundary blend width (25Hz frames, 10≈0.4s)
-    repaint_wav_crossfade_sec: float = 0.0  # waveform-level splice crossfade (seconds, 0=hard cut)
+    repaint_latent_crossfade_frames: Optional[int] = None
+    repaint_wav_crossfade_sec: Optional[float] = None
     repaint_mode: str = "balanced"  # "conservative", "balanced", or "aggressive"
-    repaint_strength: float = 0.5  # 0.0=aggressive, 1.0=conservative (balanced mode only)
+    repaint_strength: float = 0.5  # Higher values preserve less of the source in balanced mode.
     # Retake: variance-preserving noise mixing for variation generation.
     # retake_variance=0 is a no-op; the retake_seed is only consumed when variance>0.
     retake_seed: Optional[Union[str, int]] = None
     retake_variance: float = 0.0
-    # Flow-edit overlay: when True on a cover/cover-nofsq
-    # task, paint the source audio toward the user's caption/lyrics by
-    # integrating V_delta = V_tar(caption, lyrics) - V_src(source_caption,
-    # source_lyrics) over [n_min, n_max].  The overlay layers on top of
-    # the existing cover dispatch — there is no standalone "edit" task
-    # type.  ``flow_edit_source_caption`` / ``flow_edit_source_lyrics``
-    # describe the *original* audio (what V_src is conditioned on);
-    # ``caption`` / ``lyrics`` are the *target* (what V_tar morphs toward).
-    # FlowEdit uses Euler sampling without DCW or ADG.
+    # FlowEdit steers the source toward the target caption and lyrics.
     flow_edit_morph: bool = False
     flow_edit_source_caption: str = ""
     flow_edit_source_lyrics: str = ""
@@ -241,7 +227,6 @@ class CachedRepaintSource:
 
     latents: torch.Tensor
     source_seed: Optional[int]
-    latent_path: str
 
 
 @dataclass
@@ -318,20 +303,6 @@ def _update_metadata_from_lm(
     return bpm, key_scale, time_signature, audio_duration, vocal_language, caption, lyrics
 
 
-def _candidate_repaint_sidecars(src_audio: str) -> List[str]:
-    """Return possible generated sidecar paths for a repaint source audio path."""
-    expanded_audio = os.path.expanduser(src_audio)
-    candidates = [os.path.splitext(expanded_audio)[0] + ".json"]
-    seen = set()
-    unique_candidates = []
-    for candidate in candidates:
-        normalized = os.path.abspath(candidate)
-        if normalized not in seen:
-            seen.add(normalized)
-            unique_candidates.append(normalized)
-    return unique_candidates
-
-
 def _coerce_seed_value(value: Any) -> Optional[int]:
     """Convert a sidecar seed value to an integer when possible."""
     if value is None:
@@ -374,27 +345,15 @@ def _resample_matching_source_seeds(
 
 
 def _load_cached_repaint_source(src_audio: Optional[str]) -> Optional[CachedRepaintSource]:
-    """Load cached repaint source state from a generated audio sidecar.
-
-    The cache is an optimization for ACE-generated CLI outputs. Missing or
-    malformed sidecars return ``None`` so uploaded audio keeps the normal
-    repaint path.
-    """
+    """Load source latents and the generation seed from a repaint sidecar."""
     if not src_audio:
         return None
     try:
         audio_path = os.fspath(src_audio)
     except TypeError:
         return None
-    sidecars = _candidate_repaint_sidecars(audio_path)
-    json_path = next((path for path in sidecars if os.path.exists(path)), None)
-    if json_path is None:
-        logger.info(
-            "[repaint_cache] No cached source latents found for src_audio={} candidates={}",
-            audio_path,
-            sidecars,
-        )
-        return None
+    audio_path = os.path.abspath(os.path.expanduser(audio_path))
+    json_path = os.path.splitext(audio_path)[0] + ".json"
     try:
         with open(json_path, encoding="utf-8") as file_obj:
             params = json.load(file_obj)
@@ -405,13 +364,7 @@ def _load_cached_repaint_source(src_audio: Optional[str]) -> Optional[CachedRepa
     latent_file = str(params.get("repaint_source_latents_file") or "").strip()
     if not latent_file:
         return None
-    latent_path = latent_file
-    if not os.path.isabs(latent_path):
-        latent_path = os.path.join(os.path.dirname(json_path), latent_file)
-    latent_path = os.path.expanduser(latent_path)
-    if not os.path.exists(latent_path):
-        logger.warning("[repaint_cache] Cached repaint latents missing: {}", latent_path)
-        return None
+    latent_path = os.path.join(os.path.dirname(json_path), os.path.expanduser(latent_file))
     try:
         latents = np.load(latent_path).astype(np.float32)
     except (OSError, ValueError) as exc:
@@ -424,7 +377,6 @@ def _load_cached_repaint_source(src_audio: Optional[str]) -> Optional[CachedRepa
     return CachedRepaintSource(
         latents=torch.from_numpy(latents),
         source_seed=_coerce_seed_value(params.get("seed")),
-        latent_path=latent_path,
     )
 
 
@@ -437,6 +389,7 @@ def generate_music(
     progress=None,
     prompt_editor=None,
     before_dit=None,
+    return_latents: bool = True,
 ) -> GenerationResult:
     """Generate music using ACE-Step model with optional LM reasoning.
     
@@ -445,6 +398,7 @@ def generate_music(
         llm_handler: Initialized LLM handler (LLMHandler instance)
         params: Generation parameters (GenerationParams instance)
         config: Generation configuration (GenerationConfig instance)
+        return_latents: Include generated latents in the result.
         
     Returns:
         GenerationResult with generated audio files and metadata
@@ -596,9 +550,7 @@ def generate_music(
                 logger.info(f"LM chunk {chunk_idx+1}/{num_chunks} (infer_type={infer_type}) "
                             f"(size: {chunk_size}, seeds: {chunk_seeds})")
 
-                # Use the determined infer_type
-                # - "llm_dit" will internally run two phases (metas + codes)
-                # - "dit" will only run phase 1 (metas only)
+                run_cot = not prompt_edits
                 result = llm_handler.generate_with_stop_condition(
                     caption=params.caption or "",
                     lyrics=params.lyrics or "",
@@ -610,9 +562,9 @@ def generate_music(
                     top_p=top_p_value,
                     target_duration=audio_duration,  # Pass duration to limit audio codes generation
                     user_metadata=user_metadata_to_pass,
-                    use_cot_caption=params.use_cot_caption,
-                    use_cot_language=params.use_cot_language,
-                    use_cot_metas=params.use_cot_metas and not (prompt_edits and chunk_idx > 0),
+                    use_cot_caption=params.use_cot_caption and run_cot,
+                    use_cot_language=params.use_cot_language and run_cot,
+                    use_cot_metas=params.use_cot_metas and run_cot,
                     use_constrained_decoding=params.use_constrained_decoding,
                     constrained_decoding_debug=config.constrained_decoding_debug,
                     batch_size=chunk_size,
@@ -807,6 +759,7 @@ def generate_music(
             "latent_shift": params.latent_shift,
             "latent_rescale": params.latent_rescale,
             "progress": progress,
+            "return_latents": return_latents,
         }
         if before_dit is not None:
             before_dit(params)
@@ -833,11 +786,9 @@ def generate_music(
         # Get base params dictionary
         base_params_dict = params.to_dict()
 
-        # Save audio files using AudioSaver (format from config)
         audio_format = str(config.audio_format).strip().lower() if config.audio_format else "flac"
         audio_saver = AudioSaver(default_format=audio_format)
 
-        # Use handler's temp_dir for saving files
         if save_dir is not None:
             os.makedirs(save_dir, exist_ok=True)
 

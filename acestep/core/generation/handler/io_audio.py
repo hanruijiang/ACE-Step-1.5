@@ -50,26 +50,6 @@ class IoAudioMixin:
             return torch.from_numpy(audio_np).unsqueeze(0)
         return torch.from_numpy(audio_np.T)
 
-    def process_target_audio(self, audio_file: Optional[str]) -> Optional[torch.Tensor]:
-        """Load and normalize target audio file.
-
-        Args:
-            audio_file: Path to target audio file.
-
-        Returns:
-            Normalized stereo 48kHz tensor, or ``None`` on error/empty input.
-        """
-        if audio_file is None:
-            return None
-
-        try:
-            audio_np, sr = _read_audio_file(audio_file)
-            audio = self._numpy_to_channels_first(audio_np)
-            return self._normalize_audio_to_stereo_48k(audio, sr)
-        except Exception:
-            logger.exception("[process_target_audio] Error processing target audio")
-            return None
-
     def process_reference_audio(
         self, audio_file: Optional[str]
     ) -> Optional[torch.Tensor]:

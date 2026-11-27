@@ -3,7 +3,7 @@
 import gc
 import os
 import time
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from loguru import logger
@@ -49,25 +49,10 @@ class GenerateMusicDecodeMixin:
             logger.debug(f"[generate_music] pred_latents: {pred_latents.shape}, dtype={pred_latents.dtype}")
         logger.debug(f"[generate_music] time_costs: {time_costs}")
 
-        if torch.isnan(pred_latents).any() or torch.isinf(pred_latents).any():
-            nan_count = torch.isnan(pred_latents).sum().item()
-            inf_count = torch.isinf(pred_latents).sum().item()
-            hints = [
-                f"Generation produced NaN or Inf latents "
-                f"(shape={list(pred_latents.shape)}, dtype={pred_latents.dtype}, "
-                f"device={pred_latents.device}, nan={nan_count}, inf={inf_count}).",
-                "Common causes and fixes:",
-                "  1. Checkpoint/config mismatch — verify model checkpoints match this release.",
-                "  2. Unsupported quantization/backend — try running with --backend pt.",
-                "  3. CPU offload left parameters on wrong device — restart and regenerate.",
-                "  4. Float16 overflow on pre-Ampere GPU — set ACESTEP_DTYPE=float32.",
-            ]
-            raise RuntimeError("\n".join(hints))
+        if not torch.isfinite(pred_latents).all():
+            raise RuntimeError("Generation produced NaN or Inf latents.")
         if pred_latents.numel() > 0 and pred_latents.abs().sum() == 0:
-            raise RuntimeError(
-                "Generation produced zero latents. "
-                "This usually indicates a checkpoint/config mismatch or unsupported setup."
-            )
+            raise RuntimeError("Generation produced zero latents.")
         if latent_shift != 0.0 or latent_rescale != 1.0:
             logger.info(
                 f"[generate_music] Applying latent post-processing: shift={latent_shift}, "
@@ -94,7 +79,8 @@ class GenerateMusicDecodeMixin:
         progress: Any,
         use_tiled_decode: bool,
         time_costs: Dict[str, Any],
-    ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, Any]]:
+        return_latents: bool = True,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Dict[str, Any]]:
         """Decode predicted latents and update decode timing metrics.
 
         Args:
@@ -102,6 +88,7 @@ class GenerateMusicDecodeMixin:
             progress: Optional progress callback.
             use_tiled_decode: Whether tiled VAE decode should be used.
             time_costs: Mutable time-cost payload from service generation.
+            return_latents: Include a copy of the predicted latents on CPU.
 
         Returns:
             Tuple of decoded waveforms, CPU latents, and updated time-cost payload.
@@ -112,39 +99,20 @@ class GenerateMusicDecodeMixin:
         start_time = time.time()
         with torch.inference_mode():
             with self._load_model_context("vae"):
-                pred_latents_cpu = pred_latents.detach().cpu()
+                pred_latents_cpu = pred_latents.detach().cpu() if return_latents else None
                 pred_latents_for_decode = pred_latents.transpose(1, 2).contiguous().to(self.vae.dtype)
-                del pred_latents
-                self._empty_cache()
 
                 logger.debug(
                     "[generate_music] Before VAE decode: "
                     f"allocated={self._memory_allocated()/1024**3:.2f}GB, "
                     f"max={self._max_memory_allocated()/1024**3:.2f}GB"
                 )
-                vae_cpu = False
                 vae_device = None
                 vae_cpu = os.environ.get("ACESTEP_VAE_ON_CPU", "0").lower() in ("1", "true", "yes")
-                if not vae_cpu:
-                    if self.device == "mps":
-                        logger.info(
-                            "[generate_music] MPS device: skipping VRAM check "
-                            "(unified memory), keeping VAE on MPS"
-                        )
-                    else:
-                        effective_free = get_effective_free_vram_gb()
-                        logger.info(
-                            "[generate_music] Effective free VRAM before VAE decode: "
-                            f"{effective_free:.2f} GB"
-                        )
-                        if effective_free < 0.5:
-                            logger.warning(
-                                "[generate_music] Only "
-                                f"{effective_free:.2f} GB free VRAM; auto-enabling CPU VAE decode"
-                            )
-                            vae_cpu = True
+                if not vae_cpu and self.device != "mps":
+                    vae_cpu = get_effective_free_vram_gb() < 0.5
                 if vae_cpu:
-                    logger.info("[generate_music] Moving VAE to CPU for decode (ACESTEP_VAE_ON_CPU=1)...")
+                    logger.info("[generate_music] Decoding with the VAE on CPU.")
                     vae_device = next(self.vae.parameters()).device
                     self.vae = self.vae.cpu()
                     pred_latents_for_decode = pred_latents_for_decode.cpu()

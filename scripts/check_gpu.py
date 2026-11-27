@@ -279,7 +279,7 @@ def main():
     pytorch_ok = check_pytorch()
     
     if pytorch_ok:
-        gpu_ok = check_cuda_availability()
+        check_cuda_availability()
         check_rocm_setup()
         check_nvidia_setup()
         check_ace_step_env()

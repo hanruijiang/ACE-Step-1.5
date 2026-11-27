@@ -10,6 +10,7 @@ import time
 import random
 from typing import Optional, Dict, Any, Tuple, List, Union
 from contextlib import contextmanager
+from pathlib import Path
 
 import yaml
 import torch
@@ -87,18 +88,17 @@ class LLMHandler:
         return str(get_checkpoints_dir())
 
     def get_available_5hz_lm_models(self) -> List[str]:
-        """Scan and return all model directory names starting with 'acestep-5Hz-lm-'"""
-        checkpoint_dir = self._get_checkpoint_dir()
+        """List complete local 5Hz LM checkpoints."""
+        from acestep.model_downloader import check_model_exists
 
-        models = []
-        if os.path.exists(checkpoint_dir):
-            for item in os.listdir(checkpoint_dir):
-                item_path = os.path.join(checkpoint_dir, item)
-                if os.path.isdir(item_path) and item.startswith("acestep-5Hz-lm-"):
-                    models.append(item)
-
-        models.sort()
-        return models
+        checkpoints = Path(self._get_checkpoint_dir())
+        if not checkpoints.is_dir():
+            return []
+        return sorted(
+            path.name
+            for path in checkpoints.iterdir()
+            if path.name.startswith("acestep-5Hz-lm-") and check_model_exists(path.name, checkpoints)
+        )
 
     def _compute_max_new_tokens(
         self,
@@ -849,9 +849,7 @@ class LLMHandler:
         is_batch = batch_size and batch_size > 1
         actual_batch_size = batch_size if is_batch else 1
 
-        # Initialize variables
-        metadata = {}
-        audio_codes = ""
+        metadata = {key: value for key, value in (user_metadata or {}).items() if value is not None}
         has_all_metas = self.has_all_metas(user_metadata)
         phase1_time = 0.0
         phase2_time = 0.0
@@ -869,9 +867,8 @@ class LLMHandler:
             torch.manual_seed(seeds[0])
 
         # ========== PHASE 1: CoT Generation ==========
-        # Skip CoT if all metadata are user-provided OR caption is already formatted
         progress(0.1, f"Phase 1: Generating CoT metadata (once for all items)...")
-        if not has_all_metas and use_cot_metas:
+        if (use_cot_metas and not has_all_metas) or use_cot_caption or use_cot_language:
             if is_batch:
                 logger.info("Batch Phase 1: Generating CoT metadata (once for all items)...")
             else:
@@ -921,25 +918,20 @@ class LLMHandler:
                     "extra_outputs": {"time_costs": {"phase1_time": phase1_time}},
                 }
 
-            # Parse metadata from CoT output
-            metadata, _ = self.parse_lm_output(cot_output_text)
+            generated_metadata, _ = self.parse_lm_output(cot_output_text)
+            if use_cot_metas:
+                metadata.update(generated_metadata)
+            else:
+                if use_cot_caption and "caption" in generated_metadata:
+                    metadata["caption"] = generated_metadata["caption"]
+                if use_cot_language and "language" in generated_metadata:
+                    metadata["language"] = generated_metadata["language"]
             if is_batch:
                 logger.info(f"Batch Phase 1 completed in {phase1_time:.2f}s. Generated metadata: {list(metadata.keys())}")
             else:
                 logger.info(f"Phase 1 completed in {phase1_time:.2f}s. Generated metadata: {list(metadata.keys())}")
-        else:
-            # Use user-provided metadata
-            if is_batch:
-                logger.info("Batch Phase 1: Using user-provided metadata (skipping generation)")
-            else:
-                logger.info("Phase 1: Using user-provided metadata (skipping generation)")
-            metadata = {k: v for k, v in (user_metadata or {}).items() if v is not None}
 
-        # When the caller did not supply an explicit target_duration, use the
-        # duration that Phase 1 (CoT) produced so that Phase 2 code generation
-        # is properly constrained.  Without this, a null API duration lets
-        # Phase 2 run unconstrained, potentially producing more audio codes
-        # than the downstream DiT expects and causing a tensor-size mismatch.
+        # Match the audio token count to the duration inferred by CoT.
         if (target_duration is None or target_duration <= 0) and metadata.get("duration"):
             try:
                 cot_duration = float(metadata["duration"])
@@ -1412,7 +1404,6 @@ class LLMHandler:
 
         # Build user_metadata if vocal_language is specified and is not "unknown"
         user_metadata = None
-        skip_language = False
         if vocal_language and vocal_language.strip() and vocal_language.strip().lower() != "unknown":
             # Use the specified language for constrained decoding
             user_metadata = {"language": vocal_language.strip()}

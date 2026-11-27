@@ -1,11 +1,5 @@
 # ACE-Step 1.5 CLI Guide
 
-This guide explains how to use `cli.py`, the interactive wizard and config-driven CLI for ACE-Step inference.
-
-The CLI is **wizard/config only**: you either run the wizard to build a config, or load a `.toml` config and generate.
-
----
-
 ## Quick Start
 
 Generate via wizard (interactive):
@@ -51,39 +45,34 @@ python cli.py --configure --config config.toml
 10. Review summary and confirm generation.
 11. Save configuration to a `.toml` file.
 
-If you skip advanced parameters, the wizard fills **all optional parameters** with defaults from `GenerationParams` and `GenerationConfig`.
+On low-memory tiers, the wizard leaves LM thinking and CoT off by default. Simple Mode and automatic lyrics load an LM when requested.
 
 ---
 
 ## Configure Mode (`--configure`)
 
-`--configure` runs the wizard **without generation** and always saves a config.
-
-Behavior:
-- If `--config` is provided, the file is loaded and used as the wizard's starting values.
-- After the wizard, you choose a filename to save (overwriting or new).
-- The program exits without generation.
+`--configure` opens the wizard to save a TOML file. Pass `--config` to start from an existing file.
 
 ---
 
 ## Configuration File (`.toml`)
 
-The wizard saves a `.toml` file containing all parameters. These keys map directly to the fields used in `cli.py`.
+The wizard saves chosen settings in TOML. Loading a file with `--config` rejects unknown keys.
 
-When you load a config with `--config`, recognized keys are applied to runtime settings; unknown keys are rejected.
+Checkpoint lookup uses `checkpoint_dir`, then `ACESTEP_CHECKPOINTS_DIR`, then `project_root/checkpoints`. Relative `checkpoint_dir` values resolve against `project_root`. The project root defaults to `ACESTEP_PROJECT_ROOT` or the working directory.
 
-Checkpoint path precedence: explicit `checkpoint_dir` (relative to `project_root` if not absolute), `ACESTEP_CHECKPOINTS_DIR`, then `project_root/checkpoints`. The root defaults to `ACESTEP_PROJECT_ROOT` or the working directory. All model discovery, download and inference use the same resolved directory.
+- **LM**. `thinking` enables audio-token generation. Unspecified CoT options follow `thinking`. Set `use_cot_metas`, `use_cot_caption`, or `use_cot_language` explicitly to control each feature.
+- **Repaint**. `repaint_mode` and `repaint_strength` set the default crossfades. Set `repaint_latent_crossfade_frames` or `repaint_wav_crossfade_sec` to override them. Use `0` for a hard boundary. Aggressive mode disables crossfades.
+- **FlowEdit**. Use `flow_edit_morph = true` with a source file on `text2music`, `cover`, or `cover-nofsq`. Set `flow_edit_source_caption` and `flow_edit_source_lyrics` to describe the source. Set `flow_edit_n_min`, `flow_edit_n_max`, and `flow_edit_n_avg` to control sampling.
+- **Model options**. `vae_checkpoint` accepts a registered VAE or an absolute path. Run `acestep-download --model scragvae` to fetch ScragVAE separately. `quantization` requires TorchAO.
+- **Output**. `audio_format` accepts `wav`, `wav32`, `flac`, `mp3`, `opus`, and `aac`. FFmpeg must be on PATH for compressed output, with `libmp3lame` for MP3 and `libopus` for Opus. Set `mp3_bitrate` and `mp3_sample_rate` to control MP3 export.
 
-Advanced TOML options include `repaint_mode`, `repaint_strength`, `retake_seed`, `retake_variance`, `flow_edit_morph`, `flow_edit_source_caption`, `flow_edit_source_lyrics`, `flow_edit_n_min`, `flow_edit_n_max`, `flow_edit_n_avg`, `quantization` and `vae_checkpoint`. Set `flow_edit_morph = true` only for supported editing tasks with a source audio file. Quantization requires an appropriate optional torchao installation.
-
-`audio_format` accepts `wav`, `wav32`, `flac`, `mp3`, `opus`, and `aac`. Compressed output requires FFmpeg on PATH. MP3 options are `mp3_bitrate` and `mp3_sample_rate`. Invalid formats and failed generation return a nonzero exit status. Generation runs synchronously by default. Set `ACESTEP_GENERATION_TIMEOUT` to a positive number of seconds to enable a wait timeout; this does not cancel GPU work.
+Generation runs synchronously by default. `ACESTEP_GENERATION_TIMEOUT` sets how many seconds the CLI waits. GPU work may continue after the timeout.
 
 ---
 
 ## Prompt Editing (`instruction.txt`)
 
-When `thinking=True` and a config file is loaded via `--config`, the CLI looks for an `instruction.txt` file in the project root. If found, its contents are used as the pre-loaded formatted prompt for LM audio-token generation, bypassing the interactive editing step.
+When LM audio-token generation is active, the wizard writes `instruction.txt` in the project root and pauses for edits. With `--config`, the CLI reads the file if present and runs without pausing.
 
-When running without a config file (wizard mode), the CLI writes the LM's formatted prompt to `instruction.txt` and pauses so you can edit it before audio-token generation proceeds. The edited prompt applies to every output in the batch. Config-driven generation without `instruction.txt` runs without a prompt-editing pause.
-
-The file controls the exact prompt (caption, lyrics, metadata) used for audio-token generation. Keep the metadata inside the `<think>` block in YAML format.
+Edits apply to every output in the batch. Keep metadata in YAML inside the `<think>` block. To clear lyrics, leave the `# Lyric` section empty.

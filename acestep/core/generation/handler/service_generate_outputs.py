@@ -1,6 +1,6 @@
 """Output assembly helpers for service generation."""
 
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 import torch
 
@@ -13,9 +13,9 @@ class ServiceGenerateOutputsMixin:
         outputs: Dict[str, Any],
         payload: Dict[str, Any],
         batch: Dict[str, Any],
-        encoder_hidden_states: torch.Tensor,
-        encoder_attention_mask: torch.Tensor,
-        context_latents: torch.Tensor,
+        encoder_hidden_states: Optional[torch.Tensor],
+        encoder_attention_mask: Optional[torch.Tensor],
+        context_latents: Optional[torch.Tensor],
         return_intermediate: bool = True,
     ) -> Dict[str, Any]:
         """Attach intermediate tensors required by downstream consumers."""

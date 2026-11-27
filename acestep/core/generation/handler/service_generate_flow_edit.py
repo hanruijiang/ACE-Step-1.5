@@ -1,25 +1,8 @@
-"""Dispatch FlowEdit generation.
-
-The user's ``caption`` / ``lyrics`` already flowed through the regular
-text2music preprocessing pipeline and ended up in ``payload`` as the
-*target* text + lyric embeddings.  Flow-edit overlay adds:
-
-  * a *source* branch encoded from ``flow_edit_source_caption`` /
-    ``flow_edit_source_lyrics`` — describes the original audio;
-  * paired ``prepare_condition`` calls fed ``silence_latent`` for the
-    audio context (the text2music shape, identical for both branches),
-    so V_src and V_tar differ only in encoder text/lyric;
-  * the user's encoded ``src_audio`` (already in ``payload['src_latents']``
-    because we let it through for ``flow_edit_morph=True``) drives the
-    sampling-loop ``zt_src`` / ``zt_tar`` formation.
-
-Source tokenization + embedding helpers live in
-``service_generate_flow_edit_source.py`` (split per the 200 LOC cap).
-"""
+"""Run FlowEdit with separate source and target conditioning."""
 
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from loguru import logger
@@ -34,21 +17,12 @@ def dispatch_flow_edit_overlay(
     generate_kwargs: Dict[str, Any],
     seed_param: Any,
     flow_edit_ctx: Dict[str, Any],
-) -> Tuple[Dict[str, Any], torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Run paired flow-edit on top of text2music dispatch.
-
-    Builds source text/lyric embeddings from
-    ``flow_edit_ctx['source_caption']`` / ``['source_lyrics']``, then
-    calls :func:`flow_edit_pipeline.flowedit_generate_audio` which
-    handles the two ``prepare_condition`` calls (one per branch, both
-    fed silence-context like text2music) and the sampling-loop V_delta
-    integration.
-    """
+    return_intermediate: bool = False,
+) -> Tuple[Dict[str, Any], Optional[torch.Tensor], Optional[torch.Tensor], Optional[torch.Tensor]]:
+    """Run paired FlowEdit conditioning and diffusion."""
     if not hasattr(handler.model, "flowedit_generate_audio"):
         raise RuntimeError(
-            "Flow-edit overlay requires a base DiT variant — the loaded "
-            "model does not expose flowedit_generate_audio.  Supported "
-            "variants: xl_base, xl_sft, sft, base."
+            "The loaded model does not support FlowEdit (flowedit_generate_audio)."
         )
     real_src_latents = payload["src_latents"]
     bsz, seq, ch = real_src_latents.shape
@@ -68,7 +42,6 @@ def dispatch_flow_edit_overlay(
         task_type, bsz, n_min, n_max, n_avg,
     )
 
-    # Source side text/lyric embeddings (target side is already in payload).
     src_text_ids, src_text_am, src_lyric_ids, src_lyric_am = tokenize_source(
         handler,
         source_caption=src_caption,
@@ -115,7 +88,7 @@ def dispatch_flow_edit_overlay(
                 text_attention_mask=src_text_am,
                 lyric_hidden_states=src_lyric_hs,
                 lyric_attention_mask=src_lyric_am,
-                # Audio context: silence for both branches (text2music shape).
+                # Both branches share the same audio context.
                 refer_audio_acoustic_hidden_states_packed=payload["refer_audio_acoustic_hidden_states_packed"],
                 refer_audio_order_mask=payload["refer_audio_order_mask"],
                 src_latents=real_src_latents,        # for zt_src/zt_tar formation
@@ -137,27 +110,27 @@ def dispatch_flow_edit_overlay(
                 edit_n_max=n_max,
                 edit_n_avg=n_avg,
                 precomputed_lm_hints_25Hz=precomputed_lm_hints_arg,
-                # v1-disabled tricks — pipeline logs them and bypasses.
                 sampler_mode=generate_kwargs.get("sampler_mode", "euler"),
                 use_adg=generate_kwargs.get("use_adg", False),
                 dcw_enabled=generate_kwargs.get("dcw_enabled", False),
             )
 
-    # Return target-side encoder/context for downstream auto-LRC + scoring.
-    attn = torch.ones(bsz, seq, device=device, dtype=dtype)
-    enc_hs, enc_am, ctx = handler.model.prepare_condition(
-        text_hidden_states=payload["text_hidden_states"],
-        text_attention_mask=payload["text_attention_mask"],
-        lyric_hidden_states=payload["lyric_hidden_states"],
-        lyric_attention_mask=payload["lyric_attention_mask"],
-        refer_audio_acoustic_hidden_states_packed=payload["refer_audio_acoustic_hidden_states_packed"],
-        refer_audio_order_mask=payload["refer_audio_order_mask"],
-        hidden_states=ctx_input,
-        attention_mask=attn,
-        silence_latent=handler.silence_latent,
-        src_latents=ctx_input,
-        chunk_masks=payload["chunk_mask"],
-        is_covers=is_covers_arg,
-        precomputed_lm_hints_25Hz=precomputed_lm_hints_arg,
-    )
+            if not return_intermediate:
+                return outputs, None, None, None
+            attn = torch.ones(bsz, seq, device=device, dtype=dtype)
+            enc_hs, enc_am, ctx = handler.model.prepare_condition(
+                text_hidden_states=payload["text_hidden_states"],
+                text_attention_mask=payload["text_attention_mask"],
+                lyric_hidden_states=payload["lyric_hidden_states"],
+                lyric_attention_mask=payload["lyric_attention_mask"],
+                refer_audio_acoustic_hidden_states_packed=payload["refer_audio_acoustic_hidden_states_packed"],
+                refer_audio_order_mask=payload["refer_audio_order_mask"],
+                hidden_states=ctx_input,
+                attention_mask=attn,
+                silence_latent=handler.silence_latent,
+                src_latents=ctx_input,
+                chunk_masks=payload["chunk_mask"],
+                is_covers=is_covers_arg,
+                precomputed_lm_hints_25Hz=precomputed_lm_hints_arg,
+            )
     return outputs, enc_hs, enc_am, ctx
