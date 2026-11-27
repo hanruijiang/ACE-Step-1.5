@@ -3,6 +3,7 @@ import re
 import ast
 import os
 import sys
+import shutil
 import toml
 from pathlib import Path
 from typing import List, Optional, Tuple
@@ -923,7 +924,7 @@ def run_wizard(args, configure_only: bool = False, default_config_path: Optional
 
             print("\n--- Output Settings ---")
             args.save_dir = _prompt_with_default("Save directory", args.save_dir)
-            args.audio_format = _prompt_with_default("Audio format (mp3/wav/flac)", args.audio_format)
+            args.audio_format = _prompt_with_default("Audio format (wav/wav32/flac/mp3/opus/aac)", args.audio_format)
             # Batch size already captured above.
             args.use_random_seed = _prompt_bool("Use random seed per batch", args.use_random_seed)
             seeds_input = _prompt_with_default(
@@ -1368,6 +1369,13 @@ def main():
             except Exception as e:
                 parser.error(f"Could not read lyrics file {lyrics_arg}. Error: {e}")
         # else: lyrics is a string, use as is.
+
+    from acestep.audio_utils import SUPPORTED_AUDIO_FORMATS
+    args.audio_format = str(args.audio_format).lower()
+    if args.audio_format not in SUPPORTED_AUDIO_FORMATS:
+        parser.error(f"Unsupported audio format: {args.audio_format}")
+    if args.audio_format in {"mp3", "opus", "aac"} and not shutil.which("ffmpeg"):
+        parser.error("FFmpeg is required for compressed audio output; install it and add it to PATH.")
 
     # --- Handler Initialization ---
     if args.backend == "pyTorch":

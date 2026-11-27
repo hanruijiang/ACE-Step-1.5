@@ -38,12 +38,12 @@ class ReadAudioFileTests(unittest.TestCase):
             os.unlink(tmp.name)
 
     def test_falls_back_to_torchaudio_on_soundfile_failure(self):
-        """When soundfile fails, torchaudio.load should be tried."""
+        """When soundfile fails, FFmpeg should be tried."""
         fake_waveform = torch.randn(1, 44100)
 
-        with patch("acestep.core.generation.handler.io_audio.sf") as mock_sf:
+        with patch("acestep.audio_utils.sf") as mock_sf:
             mock_sf.read.side_effect = Exception("Format not recognised")
-            with patch("torchaudio.load", return_value=(fake_waveform, 44100)) as mock_load:
+            with patch("acestep.audio_utils._decode_audio_ffmpeg", return_value=(fake_waveform.numpy().squeeze(0), 44100)) as mock_load:
                 audio_np, sr = _read_audio_file("test.aac")
 
         self.assertEqual(sr, 44100)
@@ -51,14 +51,14 @@ class ReadAudioFileTests(unittest.TestCase):
         mock_load.assert_called_once_with("test.aac")
 
     def test_raises_when_both_fail(self):
-        """Should raise RuntimeError when both soundfile and torchaudio fail."""
-        with patch("acestep.core.generation.handler.io_audio.sf") as mock_sf:
+        """Should raise RuntimeError when both soundfile and FFmpeg fail."""
+        with patch("acestep.audio_utils.sf") as mock_sf:
             mock_sf.read.side_effect = Exception("sf fail")
-            with patch("torchaudio.load", side_effect=RuntimeError("ta fail")):
+            with patch("acestep.audio_utils._decode_audio_ffmpeg", side_effect=RuntimeError("ffmpeg fail")):
                 with self.assertRaises(RuntimeError) as ctx:
                     _read_audio_file("bad.xyz")
                 self.assertIn("sf fail", str(ctx.exception))
-                self.assertIn("ta fail", str(ctx.exception))
+                self.assertIn("ffmpeg fail", str(ctx.exception))
 
 
 class IoAudioMixinTests(unittest.TestCase):
@@ -144,7 +144,7 @@ class ReadAudioFileIntegrationTest(unittest.TestCase):
 
     @unittest.skipUnless(os.path.exists("/tmp/test_aac.aac"), "test AAC file not present")
     def test_reads_aac_file(self):
-        """AAC file should be readable via torchaudio fallback."""
+        """AAC file should be readable via FFmpeg fallback."""
         audio_np, sr = _read_audio_file("/tmp/test_aac.aac")
         self.assertGreater(sr, 0)
         self.assertGreater(audio_np.shape[0], 0)

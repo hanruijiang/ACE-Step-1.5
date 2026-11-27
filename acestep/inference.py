@@ -1025,7 +1025,7 @@ def generate_music(
                                                         mp3_sample_rate=getattr(config, "mp3_sample_rate", 48000))
                 except Exception as e:
                     logger.error(f"[generate_music] Failed to save audio file: {e}")
-                    audio_path = ""  # Fallback to empty path
+                    raise RuntimeError(f"Failed to save generated audio: {e}") from e
 
             audio_dict = {
                 "path": audio_path or "",  # File path (saved here, not in handler)
