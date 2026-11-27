@@ -6,7 +6,6 @@ designed for third-party integration. It offers both a simplified API and
 backward-compatible Gradio UI support.
 """
 
-import glob
 import inspect
 import json
 import math
@@ -24,7 +23,6 @@ from acestep.audio_utils import AudioSaver, apply_fade, generate_uuid_from_param
 from acestep.constants import BPM_MIN, BPM_MAX, DURATION_MAX, TASK_TYPES, VALID_TIME_SIGNATURES
 
 # HuggingFace Space environment detection
-IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
 
 # Task types conditioned directly on reference/source audio rather than on
 # LM-generated audio codes.  Two decisions must stay in lockstep for these:
@@ -36,21 +34,6 @@ IS_HUGGINGFACE_SPACE = os.environ.get("SPACE_ID") is not None
 DIRECT_CONDITIONING_TASKS = frozenset(
     {"cover", "cover-nofsq", "repaint", "extract", "complete", "lego"}
 )
-
-def _get_spaces_gpu_decorator(duration=180):
-    """
-    Get the @spaces.GPU decorator if running in HuggingFace Space environment.
-    Returns identity decorator if not in Space environment.
-    """
-    if IS_HUGGINGFACE_SPACE:
-        try:
-            import spaces
-            return spaces.GPU(duration=duration)
-        except ImportError:
-            logger.warning("spaces package not found, GPU decorator disabled")
-            return lambda func: func
-    return lambda func: func
-
 
 @dataclass
 class GenerationParams:
@@ -391,13 +374,6 @@ def _candidate_repaint_sidecars(src_audio: str) -> List[str]:
     """Return possible generated sidecar paths for a repaint source audio path."""
     expanded_audio = os.path.expanduser(src_audio)
     candidates = [os.path.splitext(expanded_audio)[0] + ".json"]
-    basename = os.path.splitext(os.path.basename(expanded_audio))[0]
-    if basename:
-        results_root = os.path.join(os.getcwd(), "gradio_outputs")
-        sidecars = glob.glob(
-            os.path.join(results_root, "batch_*", f"{glob.escape(basename)}.json")
-        )
-        candidates.extend(sorted(sidecars, key=os.path.getmtime, reverse=True))
     seen = set()
     unique_candidates = []
     for candidate in candidates:
@@ -510,7 +486,6 @@ def _load_cached_repaint_source_latents(src_audio: Optional[str]) -> Optional[to
     return cached_source.latents if cached_source is not None else None
 
 
-@_get_spaces_gpu_decorator(duration=180)
 def generate_music(
     dit_handler,
     llm_handler,

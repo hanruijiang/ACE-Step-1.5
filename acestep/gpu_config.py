@@ -694,7 +694,7 @@ def _log_gpu_diagnostic_info(torch_module):
         )
         logger.warning("  3. Set HSA_OVERRIDE_GFX_VERSION for your GPU (see above)")
         logger.warning(
-            "  4. On Windows: Use start_gradio_ui_rocm.bat which sets required env vars"
+            "  4. On Windows: Install the ROCm-compatible PyTorch build and configure its environment"
         )
         logger.warning(
             "  5. See docs/en/ACE-Step1.5-Rocm-Manual-Linux.md for Linux setup"

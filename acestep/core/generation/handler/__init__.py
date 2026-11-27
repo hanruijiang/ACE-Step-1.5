@@ -17,7 +17,6 @@ from .init_service import InitServiceMixin
 from .io_audio import IoAudioMixin
 from .lyric_score import LyricScoreMixin
 from .lyric_timestamp import LyricTimestampMixin
-from .lora_manager import LoraManagerMixin
 from .memory_utils import MemoryUtilsMixin
 from .metadata_utils import MetadataMixin
 from .mlx_dit_init import MlxDitInitMixin
@@ -32,7 +31,6 @@ from .service_generate_outputs import ServiceGenerateOutputsMixin
 from .service_generate_request import ServiceGenerateRequestMixin
 from .service_generate import ServiceGenerateMixin
 from .task_utils import TaskUtilsMixin
-from .training_preset import TrainingPresetMixin
 from .vae_decode import VaeDecodeMixin
 from .vae_decode_chunks import VaeDecodeChunksMixin
 from .vae_encode import VaeEncodeMixin
@@ -56,7 +54,6 @@ __all__ = [
     "IoAudioMixin",
     "LyricScoreMixin",
     "LyricTimestampMixin",
-    "LoraManagerMixin",
     "MemoryUtilsMixin",
     "MetadataMixin",
     "MlxDitInitMixin",
@@ -71,7 +68,6 @@ __all__ = [
     "ServiceGenerateOutputsMixin",
     "ServiceGenerateRequestMixin",
     "TaskUtilsMixin",
-    "TrainingPresetMixin",
     "VaeDecodeMixin",
     "VaeDecodeChunksMixin",
     "VaeEncodeMixin",

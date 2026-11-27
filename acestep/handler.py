@@ -1,6 +1,6 @@
 """
 Business Logic Handler
-Encapsulates all data processing and business logic as a bridge between model and UI
+Encapsulates all data processing and business logic for CLI inference
 """
 import os
 import sys
@@ -33,7 +33,6 @@ from acestep.core.generation.handler import (
     IoAudioMixin,
     LyricScoreMixin,
     LyricTimestampMixin,
-    LoraManagerMixin,
     MemoryUtilsMixin,
     MetadataMixin,
     MlxDitInitMixin,
@@ -44,7 +43,6 @@ from acestep.core.generation.handler import (
     ProgressMixin,
     PromptMixin,
     ServiceGenerateMixin,
-    TrainingPresetMixin,
     TaskUtilsMixin,
     VaeDecodeChunksMixin,
     VaeDecodeMixin,
@@ -77,7 +75,6 @@ class AceStepHandler(
     InitServiceMixin,
     LyricScoreMixin,
     LyricTimestampMixin,
-    LoraManagerMixin,
     MemoryUtilsMixin,
     MetadataMixin,
     MlxDitInitMixin,
@@ -88,7 +85,6 @@ class AceStepHandler(
     ProgressMixin,
     PromptMixin,
     ServiceGenerateMixin,
-    TrainingPresetMixin,
     TaskUtilsMixin,
     VaeDecodeChunksMixin,
     VaeDecodeMixin,
@@ -153,7 +149,7 @@ class AceStepHandler(
         # Populated during initialize_service, remains None if quantization is disabled
         self.quantization = None
         
-        # LoRA state
+        # Disabled adapter state (generation metadata compatibility)
         self.lora_loaded = False
         self.use_lora = False
         self.lora_scale = 1.0  # LoRA influence scale (0-1), mirrors active adapter's scale
@@ -171,6 +167,6 @@ class AceStepHandler(
         self.mlx_vae = None
         self.use_mlx_vae = False
         # MLX VAE decode chunk size — auto-detected from gpu_config,
-        # overridable via the Gradio UI slider or ACESTEP_MLX_VAE_CHUNK env var.
+        # overridable via ACESTEP_MLX_VAE_CHUNK env var.
         self.mlx_vae_chunk_size = _get_gpu_cfg().mlx_vae_chunk_size
 
