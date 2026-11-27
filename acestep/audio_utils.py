@@ -8,14 +8,13 @@ Independent audio file operations outside of handler, supporting:
 """
 
 
-import io
 import json
 import os
 import subprocess
 import hashlib
 import tempfile
 from pathlib import Path
-from typing import Union, Optional, List, Tuple
+from typing import Union, Optional, List
 import torch
 import numpy as np
 import torchaudio
@@ -398,32 +397,6 @@ class AudioSaver:
         return saved_paths
 
 
-def get_audio_file_hash(audio_file) -> str:
-    """
-    Get hash identifier for an audio file.
-    
-    Args:
-        audio_file: Path to audio file (str) or file-like object
-    
-    Returns:
-        Hash string or empty string
-    """
-    if audio_file is None:
-        return ""
-    
-    try:
-        if isinstance(audio_file, str):
-            if os.path.exists(audio_file):
-                with open(audio_file, 'rb') as f:
-                    return hashlib.sha256(f.read()).hexdigest()
-            return hashlib.sha256(audio_file.encode('utf-8')).hexdigest()
-        elif hasattr(audio_file, 'name'):
-            return hashlib.sha256(str(audio_file.name).encode('utf-8')).hexdigest()
-        return hashlib.sha256(str(audio_file).encode('utf-8')).hexdigest()
-    except Exception:
-        return hashlib.sha256(str(audio_file).encode('utf-8')).hexdigest()
-
-
 def generate_uuid_from_params(params_dict) -> str:
     """
     Generate deterministic UUID from generation parameters.
@@ -441,36 +414,6 @@ def generate_uuid_from_params(params_dict) -> str:
     hash_hex = hash_obj.hexdigest()
     uuid_str = f"{hash_hex[0:8]}-{hash_hex[8:12]}-{hash_hex[12:16]}-{hash_hex[16:20]}-{hash_hex[20:32]}"
     return uuid_str
-
-
-def generate_uuid_from_audio_data(
-    audio_data: Union[torch.Tensor, np.ndarray],
-    seed: Optional[int] = None
-) -> str:
-    """
-    Generate UUID from audio data (for caching/deduplication)
-    
-    Args:
-        audio_data: Audio data
-        seed: Optional seed value
-    
-    Returns:
-        UUID string
-    """
-    if isinstance(audio_data, torch.Tensor):
-        # Convert to numpy and calculate hash
-        audio_np = audio_data.cpu().numpy()
-    else:
-        audio_np = audio_data
-    
-    # Calculate data hash
-    data_hash = hashlib.sha256(audio_np.tobytes()).hexdigest()
-    
-    if seed is not None:
-        combined = f"{data_hash}_{seed}"
-        return hashlib.sha256(combined.encode()).hexdigest()
-    
-    return data_hash
 
 
 # Global default instance

@@ -19,7 +19,7 @@ dependencies = [
     "torch>=2.9.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "torchaudio>=2.9.1; sys_platform == 'darwin' and platform_machine == 'arm64'",
     # Common dependencies
-    "transformers>=4.51.0,<4.58.0",
+    "transformers>=4.57.0,<4.58.0",
     "diffusers>=0.37.0",
     "soundfile>=0.13.1",
     "loguru>=0.7.3",
@@ -91,4 +91,4 @@ dev = ["pytest"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["acestep"]
-exclude = ["**/*_test.py", "**/*_test_support.py", "**/*_test_helpers.py", "**/__pycache__/**", "**/*.pyc"]
+exclude = ["/acestep/third_parts", "/acestep/third_parts/**", "**/*_test.py", "**/*_test_support.py", "**/*_test_helpers.py", "**/__pycache__/**", "**/*.pyc"]

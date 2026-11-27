@@ -1,5 +1,5 @@
 # Common CLI inference dependencies; keep in sync with pyproject.toml.
-transformers>=4.51.0,<4.58.0
+transformers>=4.57.0,<4.58.0
 diffusers>=0.37.0
 soundfile>=0.13.1
 loguru>=0.7.3

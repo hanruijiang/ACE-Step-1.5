@@ -9,7 +9,6 @@ import json
 import math
 import os
 import random
-import tempfile
 from typing import Optional, Union, List, Dict, Any, Tuple
 from dataclasses import dataclass, field, asdict
 from loguru import logger
@@ -18,7 +17,6 @@ import torch
 
 
 from acestep.audio_utils import AudioSaver, apply_fade, generate_uuid_from_params, normalize_audio
-from acestep.constants import BPM_MIN, BPM_MAX, DURATION_MAX, TASK_TYPES, VALID_TIME_SIGNATURES
 
 # Task types conditioned directly on reference/source audio rather than on
 # LM-generated audio codes.  Two decisions must stay in lockstep for these:
