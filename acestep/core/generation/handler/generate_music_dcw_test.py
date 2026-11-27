@@ -1,4 +1,4 @@
-"""Regression tests for model-aware DCW defaults in generation orchestration."""
+"""Tests for model-aware DCW defaults in generation orchestration."""
 
 import unittest
 

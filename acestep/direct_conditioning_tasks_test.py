@@ -1,19 +1,4 @@
-"""Regression tests for the direct-conditioning task gate in ``generate_music``.
-
-``complete`` and ``lego`` condition on source audio.  Running the LM for them
-made it emit audio codes from text alone, and those codes then pre-empted real
-``src_audio`` processing downstream (the "Audio codes provided, ignoring
-src_audio" branch in ``_prepare_reference_and_source_audio``).  Both halves of
-the fix are asserted here, because either one alone is silently wrong:
-
-1. the LM must not run — ``llm_handler.generate_with_stop_condition`` uncalled;
-2. conditioning must come from ``params`` instead — ``src_audio``, ``caption``
-   and ``lyrics`` must reach ``dit_handler.generate_music``.
-
-The two task types are asserted separately: they share a code path, but only
-``complete`` has been behaviour-verified upstream, so a future divergence in
-``lego`` should fail on its own line rather than hide behind a loop.
-"""
+"""Verify that direct-conditioning tasks use source audio, caption and lyrics without LM generation."""
 
 import unittest
 from unittest.mock import MagicMock
@@ -27,14 +12,7 @@ from acestep.inference import (
 
 
 class RecordingDitHandler:
-    """Minimal stand-in that captures the kwargs ``generate_music`` passes on.
-
-    ``generate_music`` filters its kwargs through
-    ``inspect.signature(dit_handler.generate_music)``, so the parameters under
-    test have to be named explicitly here rather than swallowed by ``**kwargs``.
-    Returning ``success=False`` stops the orchestrator right after the call, so
-    no model or file I/O is needed.
-    """
+    """Capture DiT arguments without running a model."""
 
     def __init__(self):
         """Initialize with no captured call; ``generate_kwargs`` stays None until called."""

@@ -1,13 +1,4 @@
-"""Unit tests verifying that text2music (Custom mode) never uses src_audio.
-
-The Custom / text2music mode operates exclusively on LM-generated audio codes
-or user-provided LM Codes Hints.  Source audio uploaded in Remix / Repaint
-modes must not leak into text2music generation.
-
-Tests cover two defence layers:
-1. ``generate_music`` (inference orchestrator) — passes None to handler.
-2. ``handler.generate_music`` (backend) — skips src_audio processing.
-"""
+"""Verify source-audio routing for text2music, cover and repaint tasks."""
 
 import unittest
 from dataclasses import dataclass

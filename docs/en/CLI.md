@@ -86,4 +86,4 @@ When `thinking=True` and a config file is loaded via `--config`, the CLI looks f
 
 When running without a config file (wizard mode), the CLI writes the LM's formatted prompt to `instruction.txt` and pauses so you can edit it before audio-token generation proceeds. The edited prompt applies to every output in the batch. Config-driven generation without `instruction.txt` runs without a prompt-editing pause.
 
-This allows fine-tuning the exact prompt (caption, lyrics, metadata) that the LM sees before generating audio codes.
+The file controls the exact prompt (caption, lyrics, metadata) used for audio-token generation. Keep the metadata inside the `<think>` block in YAML format.

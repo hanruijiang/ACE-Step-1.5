@@ -1,4 +1,4 @@
-"""Tests for retake noise mixing (issue #1155).
+"""Tests for retake noise mixing.
 
 The retake mechanism re-uses the existing ``prepare_noise()`` helper twice
 (once for the main seed, once for the retake seed) and blends the results

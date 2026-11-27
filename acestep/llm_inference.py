@@ -1000,9 +1000,11 @@ class LLMHandler:
             metadata.update(prompt_edits["metadata"])
             caption = prompt_edits.get("caption", caption)
             lyrics = prompt_edits.get("lyrics", lyrics)
-            edited_duration = prompt_edits["metadata"].get("duration")
+            edited_duration = prompt_edits["overrides"].get("duration")
             if edited_duration is not None:
                 target_duration = float(edited_duration)
+            elif target_duration is None or target_duration <= 0:
+                target_duration = metadata.get("duration") or target_duration
         logger.info(f"generate_with_stop_condition: formatted_prompt_with_cot={formatted_prompt_with_cot}")
 
         progress(0.5, f"Phase 2: Generating audio codes for {actual_batch_size} items...")

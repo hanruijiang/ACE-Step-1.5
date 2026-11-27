@@ -8,8 +8,7 @@ from unittest.mock import MagicMock
 
 from acestep.inference import GenerationConfig, GenerationParams, generate_music
 
-# Not a real path — the stub handler below never opens it. Named this way
-# (rather than under /tmp) to avoid tripping insecure-tempfile lint checks.
+# Path used by the recording handler.
 SOURCE_AUDIO = "source.wav"
 
 
@@ -35,17 +34,7 @@ class RecordingDitHandler:
         use_random_seed: Optional[bool] = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Record the forwarded seed kwargs and stop the pipeline before any real work.
-
-        ``generate_music`` filters its kwargs through
-        ``inspect.signature(dit_handler.generate_music)``, so ``seed`` and
-        ``use_random_seed`` must be named explicitly here rather than left to
-        ``**kwargs`` — a bare ``**kwargs`` signature would drop them silently.
-
-        Returns:
-            A failure result (``success=False``), which makes ``generate_music``
-            return early — so no model runs and nothing is written to disk.
-        """
+        """Capture the resolved seed arguments without running a model."""
         self.generate_kwargs = {"seed": seed, "use_random_seed": use_random_seed, **kwargs}
         return {
             "success": False,

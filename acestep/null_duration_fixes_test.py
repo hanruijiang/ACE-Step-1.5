@@ -1,10 +1,4 @@
-"""Tests for null audio_duration crash fixes (issue #797) and auto-duration (issue #1022).
-
-Covers:
-  - Fix 1: CoT-generated duration feeds into Phase 2 target_duration.
-  - Fix 2: _compute_max_new_tokens caps fallback at DURATION_MAX.
-  - Fix 3: silence_latent tiling when length exceeds stored tensor.
-"""
+"""Tests for duration limits, silence-latent tiling, and BPM metadata."""
 
 import unittest
 
@@ -26,7 +20,7 @@ except ImportError as exc:  # pragma: no cover
 
 
 # ---------------------------------------------------------------------------
-# Fix 2: _compute_max_new_tokens caps
+# LM token limits
 # ---------------------------------------------------------------------------
 
 @unittest.skipIf(LLMHandler is None, f"import unavailable: {_IMPORT_ERROR}")
@@ -64,7 +58,7 @@ class ComputeMaxNewTokensCapTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Fix 3: silence_latent tiling
+# Silence-latent tiling
 # ---------------------------------------------------------------------------
 
 @unittest.skipIf(torch is None, f"import unavailable: {_IMPORT_ERROR}")
@@ -109,7 +103,7 @@ class SilenceLatentTilingTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Fix 5: BPM sentinel normalization (issue #1022)
+# BPM metadata
 # ---------------------------------------------------------------------------
 
 @unittest.skipIf(LLMHandler is None, f"import unavailable: {_IMPORT_ERROR}")

@@ -89,7 +89,7 @@ class GetEffectiveFreeVramGbTests(unittest.TestCase):
     def test_includes_pytorch_cache_when_device_free_is_zero(self):
         """Returns non-zero free VRAM when device-level free is 0 but allocator cache exists.
 
-        This is the primary regression: models fully occupy VRAM from the OS
+        Models can fully occupy VRAM from the OS
         perspective (device_free == 0), but PyTorch's caching allocator holds
         reserved-but-not-allocated memory that can be reused for inference.
         """

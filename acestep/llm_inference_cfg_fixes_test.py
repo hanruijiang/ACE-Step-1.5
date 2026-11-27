@@ -1,12 +1,4 @@
-"""Unit tests for CFG-related bug fixes in ``LLMHandler``.
-
-Covers:
-  - Fix 1: cfg_scale forced to 1.0 during CoT phase so text logits are not distorted.
-  - Fixes 2/3/5: non_audio_code_mask applied *before* CFG to avoid wasted compute
-    over the full 217k vocab and probability mass leakage.
-  - Fix 4: per-sequence EOS tracking – generation stops only when *all* sequences
-    have finished, not at the first EOS token.
-"""
+"""Tests for CoT guidance, audio-token masking, and per-sequence EOS handling."""
 
 import unittest
 from types import SimpleNamespace
@@ -68,17 +60,19 @@ def _make_fake_model(batch_size: int, vocab_size: int = 10, logit_val: float = 1
 
 
 # ---------------------------------------------------------------------------
-# Fix 1: CoT phase must use cfg_scale=1.0
+# CoT guidance
 # ---------------------------------------------------------------------------
 
 @unittest.skipIf(LLMHandler is None, f"llm_inference import unavailable: {_IMPORT_ERROR}")
-class TestCotCfgScaleFixed(unittest.TestCase):
-    """cfg_scale must be forced to 1.0 for the CoT phase (Fix 1)."""
+class TestCotCfgScale(unittest.TestCase):
+    """cfg_scale must be forced to 1.0 for the CoT phase."""
 
     def test_cot_phase_uses_cfg_scale_1(self):
         """generate_from_formatted_prompt called during CoT must receive cfg_scale=1.0."""
         handler = LLMHandler()
         handler.llm_initialized = True
+        handler.llm = MagicMock()
+        handler.llm_tokenizer = MagicMock()
 
         captured_cfg = {}
 
@@ -134,12 +128,12 @@ class TestCotCfgScaleFixed(unittest.TestCase):
 
         with patch.object(handler, "generate_from_formatted_prompt", side_effect=capturing_gen):
             with patch.object(handler, "build_formatted_prompt", return_value="P"):
-                with patch.object(handler, "_parse_metadata_from_cot", return_value={}):
+                with patch.object(handler, "parse_lm_output", return_value=({}, "")):
                     with patch.object(handler, "_format_metadata_as_cot", return_value=""):
                         with patch.object(
                             handler, "build_formatted_prompt_with_cot", return_value="P2"
                         ):
-                            # Invoke with cfg_scale=2.0 (typical UI default)
+                            # Invoke with cfg_scale=2.0 (guidance for audio tokens)
                             handler.generate_with_stop_condition(
                                 caption="test caption",
                                 lyrics="test lyrics",
@@ -166,12 +160,12 @@ class TestCotCfgScaleFixed(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Fixes 2/3/5: mask applied before CFG in CODES_GENERATION state
+# Audio-token masking before CFG
 # ---------------------------------------------------------------------------
 
 @unittest.skipIf(LLMHandler is None, f"llm_inference import unavailable: {_IMPORT_ERROR}")
 class TestCfgMaskBeforeCFG(unittest.TestCase):
-    """When in CODES_GENERATION state, invalid tokens must be -inf BEFORE CFG (Fixes 2/3/5)."""
+    """When in CODES_GENERATION state, invalid tokens must be -inf BEFORE CFG."""
 
     VOCAB_SIZE = 10
     BATCH_SIZE = 1
@@ -382,12 +376,12 @@ class TestCfgNanGuard(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Fix 4: Per-sequence EOS tracking (batch compaction)
+# Per-sequence EOS tracking
 # ---------------------------------------------------------------------------
 
 @unittest.skipIf(LLMHandler is None, f"llm_inference import unavailable: {_IMPORT_ERROR}")
 class TestPerSequenceEosTracking(unittest.TestCase):
-    """Generation must continue until ALL sequences in the batch have hit EOS (Fix 4)."""
+    """Generation must continue until ALL sequences in the batch have hit EOS."""
 
     VOCAB_SIZE = 10
 

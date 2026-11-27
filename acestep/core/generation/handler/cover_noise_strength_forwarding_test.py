@@ -1,4 +1,4 @@
-"""Regression tests for cover-noise-strength forwarding in generation."""
+"""Tests for cover-noise-strength forwarding in generation."""
 
 import contextlib
 import types
