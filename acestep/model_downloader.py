@@ -3,6 +3,7 @@
 import os
 import sys
 import hashlib
+import json
 import shutil
 import argparse
 from typing import Optional, List, Dict, Tuple
@@ -136,6 +137,7 @@ def _download(
     local_dir: Path,
     token: Optional[str] = None,
     allow_patterns: Optional[List[str]] = None,
+    force: bool = False,
 ) -> Tuple[bool, str]:
     from huggingface_hub import snapshot_download
 
@@ -147,6 +149,7 @@ def _download(
             local_dir=str(local_dir),
             token=token,
             allow_patterns=allow_patterns,
+            force_download=force,
         )
     except Exception as exc:
         return False, f"Download failed for {repo_id}: {exc}"
@@ -234,27 +237,26 @@ def get_checkpoints_dir(custom_dir: Optional[str] = None, project_root: Optional
 
 
 def _contains_model_weights(model_path: Path) -> bool:
-    """Return whether a model directory contains at least one weights artifact.
-
-    Args:
-        model_path: Candidate model directory path.
-
-    Returns:
-        `True` when a known model weights file exists in the directory.
-    """
-    weight_filenames = (
-        "model.safetensors",
-        "model.safetensors.index.json",
-        "pytorch_model.bin",
-        "pytorch_model.bin.index.json",
-        "diffusion_pytorch_model.safetensors",
-        "diffusion_pytorch_model.safetensors.index.json",
-        "diffusion_pytorch_model.bin",
-        "diffusion_pytorch_model.bin.index.json",
-    )
-    if not model_path.is_dir():
+    """Check model configuration and complete weight files."""
+    if not (model_path / "config.json").is_file():
         return False
-    return any((model_path / filename).exists() for filename in weight_filenames)
+    for filename in (
+        "model.safetensors",
+        "pytorch_model.bin",
+        "diffusion_pytorch_model.safetensors",
+        "diffusion_pytorch_model.bin",
+    ):
+        if (model_path / filename).is_file():
+            return True
+        index = model_path / f"{filename}.index.json"
+        if index.is_file():
+            try:
+                weight_map = json.loads(index.read_text(encoding="utf-8"))["weight_map"]
+                if weight_map and all((model_path / name).is_file() for name in weight_map.values()):
+                    return True
+            except (OSError, ValueError, KeyError, AttributeError, TypeError):
+                continue
+    return False
 
 
 def check_main_model_exists(checkpoints_dir: Optional[Path] = None) -> bool:
@@ -270,8 +272,7 @@ def check_main_model_exists(checkpoints_dir: Optional[Path] = None) -> bool:
         checkpoints_dir = Path(checkpoints_dir)
 
     for component in MAIN_MODEL_COMPONENTS:
-        component_path = checkpoints_dir / component
-        if not _contains_model_weights(component_path):
+        if not check_model_exists(component, checkpoints_dir):
             return False
     return True
 
@@ -296,7 +297,15 @@ def check_model_exists(model_name: str, checkpoints_dir: Optional[Path] = None) 
         checkpoints_dir = Path(checkpoints_dir)
 
     model_path = checkpoints_dir / model_name
-    return _contains_model_weights(model_path)
+    if not _contains_model_weights(model_path):
+        return False
+    if model_path.name.startswith("acestep-v15-"):
+        return (model_path / "silence_latent.pt").is_file()
+    if model_path.name.startswith("acestep-5Hz-lm-") or model_path.name == "Qwen3-Embedding-0.6B":
+        return (model_path / "tokenizer.json").is_file() or (
+            (model_path / "vocab.json").is_file() and (model_path / "merges.txt").is_file()
+        )
+    return True
 
 
 def list_available_models() -> Dict[str, str]:
@@ -350,8 +359,9 @@ def download_main_model(
     print(f"Destination: {checkpoints_dir}")
     print("This may take a while depending on your internet connection...")
 
-    # Use smart download with automatic fallback
-    success, msg = _download(MAIN_MODEL_REPO, checkpoints_dir, token)
+    success, msg = _download(MAIN_MODEL_REPO, checkpoints_dir, token, force=force)
+    if success and not check_main_model_exists(checkpoints_dir):
+        return False, f"Incomplete checkpoints in {checkpoints_dir}"
     if success:
         # Sync model code files for all DiT components in the main model
         for component in MAIN_MODEL_COMPONENTS:
@@ -394,7 +404,7 @@ def download_submodel(
 
     model_path = checkpoints_dir / model_name
 
-    if not force and model_path.exists():
+    if not force and check_model_exists(model_name, checkpoints_dir):
         return True, f"Model '{model_name}' already exists at {model_path}"
 
     repo_id = SUBMODEL_REGISTRY[model_name]
@@ -402,8 +412,9 @@ def download_submodel(
     print(f"Downloading {model_name} from {repo_id}...")
     print(f"Destination: {model_path}")
 
-    # Use smart download with automatic fallback
-    success, msg = _download(repo_id, model_path, token)
+    success, msg = _download(repo_id, model_path, token, force=force)
+    if success and not check_model_exists(model_name, checkpoints_dir):
+        return False, f"Incomplete checkpoint: {model_path}"
     if success and model_name in _CHECKPOINT_TO_VARIANT:
         # Sync model code files after successful download
         synced = _sync_model_code_files(model_name, checkpoints_dir)
@@ -500,7 +511,7 @@ def ensure_main_component(
     if not success:
         return False, msg
     if not check_model_exists(component, checkpoints_dir):
-        return False, f"Downloaded snapshot does not contain weights for '{component}'"
+        return False, f"Downloaded snapshot is incomplete for '{component}'"
     if component in _CHECKPOINT_TO_VARIANT:
         _sync_model_code_files(component, checkpoints_dir)
     return True, msg
@@ -676,7 +687,10 @@ def download_vae(
     print(f"Downloading VAE '{vae_variant}' from {repo_id}...")
     print(f"Destination: {target_path}")
 
-    return _download(repo_id, target_path, token)
+    success, msg = _download(repo_id, target_path, token, force=force)
+    if success and not _contains_model_weights(target_path):
+        return False, f"Incomplete VAE checkpoint: {target_path}"
+    return success, msg
 
 
 def ensure_vae_model(
@@ -708,7 +722,7 @@ def ensure_vae_model(
         if not path.exists():
             return False, f"VAE path '{vae_variant}' does not exist."
         return False, (
-            f"VAE path '{vae_variant}' does not contain VAE weights "
+            f"VAE path '{vae_variant}' does not contain VAE weights or config.json "
             "(expected diffusion_pytorch_model.safetensors)."
         )
 

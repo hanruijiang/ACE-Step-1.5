@@ -454,11 +454,7 @@ class LLMHandler:
             self.device = device
             self.offload_to_cpu = offload_to_cpu
 
-            # Set dtype based on device: bfloat16 for cuda/xpu, float32 for mps/cpu
-            # Note: LLM stays in float32 on MPS because autoregressive generation is
-            # latency-bound (not compute-bound), and many LLM weights trained in bfloat16
-            # produce NaN/inf when naively converted to float16 (different exponent range).
-            # The DiT and VAE use float16 on MPS where it actually helps throughput.
+            # Use BF16 where supported; otherwise use FP32 for LM stability.
             if dtype is None:
                 if device == "cuda":
                     self.dtype = torch.float32 if is_rocm_available() or not cuda_supports_bfloat16() else torch.bfloat16

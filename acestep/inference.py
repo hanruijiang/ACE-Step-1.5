@@ -134,10 +134,6 @@ class GenerationParams:
     # Resolved after the loaded model configuration is available: enabled for
     # Turbo and disabled for non-Turbo models unless explicitly overridden.
     dcw_enabled: Optional[bool] = None
-    # Defaults tuned by grid search on the pure-DiT path; "double" with
-    # low_scaler=0.05 and high_scaler=0.02 was the top configuration.  In
-    # LLM-think mode DCW's gain is small and these defaults still sit near
-    # the think-mode optimum band, so we keep a single global default.
     dcw_mode: str = "double"        # "low" | "high" | "double" | "pix"
     dcw_scaler: float = 0.05        # low-band scaler (or single scaler for "high"/"pix")
     dcw_high_scaler: float = 0.02   # high-band scaler (used only in "double" mode)
@@ -153,11 +149,11 @@ class GenerationParams:
     repaint_wav_crossfade_sec: float = 0.0  # waveform-level splice crossfade (seconds, 0=hard cut)
     repaint_mode: str = "balanced"  # "conservative", "balanced", or "aggressive"
     repaint_strength: float = 0.5  # 0.0=aggressive, 1.0=conservative (balanced mode only)
-    # Retake (issue #1155): variance-preserving noise mixing for variation generation.
+    # Retake: variance-preserving noise mixing for variation generation.
     # retake_variance=0 is a no-op; the retake_seed is only consumed when variance>0.
     retake_seed: Optional[Union[str, int]] = None
     retake_variance: float = 0.0
-    # Flow-edit overlay (issue #1156): when True on a cover/cover-nofsq
+    # Flow-edit overlay: when True on a cover/cover-nofsq
     # task, paint the source audio toward the user's caption/lyrics by
     # integrating V_delta = V_tar(caption, lyrics) - V_src(source_caption,
     # source_lyrics) over [n_min, n_max].  The overlay layers on top of
@@ -165,8 +161,7 @@ class GenerationParams:
     # type.  ``flow_edit_source_caption`` / ``flow_edit_source_lyrics``
     # describe the *original* audio (what V_src is conditioned on);
     # ``caption`` / ``lyrics`` are the *target* (what V_tar morphs toward).
-    # v1 disables DCW / heun / ADG inside the loop; see #1156 for the
-    # follow-up plan.
+    # FlowEdit uses Euler sampling without DCW or ADG.
     flow_edit_morph: bool = False
     flow_edit_source_caption: str = ""
     flow_edit_source_lyrics: str = ""

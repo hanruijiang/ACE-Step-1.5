@@ -221,9 +221,7 @@ class GPUConfig:
     save_memory_mode: bool = False
 
 # GPU tier configurations
-# tier6 has been split into tier6a (16-20GB) and tier6b (20-24GB) to fix the
-# 16GB regression. 16GB GPUs cannot hold all models simultaneously with the
-# same batch sizes as 24GB GPUs.
+# Separate memory budgets for 16–20 GB and 20–24 GB GPUs.
 GPU_TIER_CONFIGS = {
     "tier1": {  # <= 4GB
         # Offload mode required.  DiT(4.46) barely fits with CUDA context(0.5).
@@ -364,7 +362,7 @@ GPU_TIER_CONFIGS = {
     },
 }
 
-# Backward compatibility alias: code that references "tier6" gets tier6b behavior
+# 20–24 GB tier alias
 GPU_TIER_CONFIGS["tier6"] = GPU_TIER_CONFIGS["tier6b"]
 
 

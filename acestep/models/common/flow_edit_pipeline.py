@@ -1,13 +1,4 @@
-"""High-level flow-edit entrypoint shared by 4 base DiT variants (#1156).
-
-Each variant exposes a thin ``flowedit_generate_audio`` method that
-delegates here.  This module wraps :func:`flow_edit.flowedit_sampling_loop`
-with model-side glue: it builds source and target conditions via
-``model.prepare_condition`` and threads through the v1 sampler-trick
-exclusions (DCW / heun / ADG → forced off with one log line).
-
-Kept separate from ``flow_edit.py`` to honour the 200 LOC module cap.
-"""
+"""Prepare paired source and target conditions for FlowEdit sampling."""
 
 from __future__ import annotations
 
@@ -46,17 +37,12 @@ def _seed_to_generators(
     return torch.Generator(device=device).manual_seed(int(seed))
 
 
-def _warn_about_disabled_v1_tricks(
+def _warn_about_disabled_sampler_settings(
     sampler_mode: str,
     use_adg: bool,
     dcw_enabled: bool,
 ) -> None:
-    """One info log if user-supplied sampler tricks are silently bypassed.
-
-    DCW / heun / ADG are deferred to follow-up PRs (each needs paired-
-    forward derivation).  v1 forces them off; this surface lets the user
-    see why their UI knobs didn't take effect.
-    """
+    """Report sampler settings that FlowEdit does not use."""
     disabled = []
     if sampler_mode == "heun":
         disabled.append("sampler_mode=heun")
@@ -66,8 +52,8 @@ def _warn_about_disabled_v1_tricks(
         disabled.append("dcw_enabled=True")
     if disabled:
         logger.info(
-            "[flowedit] overlay v1 ignores {}; forcing euler + plain "
-            "CFG/APG.  See issue #1156 for the per-feature follow-up plan.",
+            "[flowedit] ignores {}; using Euler and "
+            "CFG/APG.",
             ", ".join(disabled),
         )
 
@@ -115,9 +101,9 @@ def flowedit_generate_audio(
     audio_codes: Optional[torch.Tensor] = None,
     # Override for the audio-context input to ``prepare_condition``.
     # text2music callers pass ``silence`` here so V_delta is purely
-    # text-driven; defaults to ``src_latents`` for back-compat.
+    # text-driven; otherwise uses ``src_latents``.
     ctx_src_latents: Optional[torch.Tensor] = None,
-    # Accepted-but-disabled v1 sampler tricks (logged + bypassed)
+    # Unsupported FlowEdit sampler settings
     sampler_mode: str = "euler",
     use_adg: bool = False,
     dcw_enabled: bool = False,
@@ -128,7 +114,7 @@ def flowedit_generate_audio(
     Returns ``{"target_latents": zt_edit, "time_costs": {...}}``.
     """
     _ = kwargs  # tolerate forwarded but unused kwargs (e.g. dcw_*)
-    _warn_about_disabled_v1_tricks(sampler_mode, use_adg, dcw_enabled)
+    _warn_about_disabled_sampler_settings(sampler_mode, use_adg, dcw_enabled)
 
     if attention_mask is None:
         latent_length = src_latents.shape[1]

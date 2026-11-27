@@ -77,7 +77,7 @@ Checkpoint path precedence: explicit `checkpoint_dir` (relative to `project_root
 
 Advanced TOML options include `repaint_mode`, `repaint_strength`, `retake_seed`, `retake_variance`, `flow_edit_morph`, `flow_edit_source_caption`, `flow_edit_source_lyrics`, `flow_edit_n_min`, `flow_edit_n_max`, `flow_edit_n_avg`, `quantization` and `vae_checkpoint`. Set `flow_edit_morph = true` only for supported editing tasks with a source audio file. Quantization requires an appropriate optional torchao installation.
 
-`audio_format` accepts `wav`, `wav32`, `flac`, `mp3`, `opus`, and `aac`. Compressed output requires FFmpeg on PATH. MP3 options are `mp3_bitrate` and `mp3_sample_rate`. Invalid formats and failed generation return a nonzero exit status.
+`audio_format` accepts `wav`, `wav32`, `flac`, `mp3`, `opus`, and `aac`. Compressed output requires FFmpeg on PATH. MP3 options are `mp3_bitrate` and `mp3_sample_rate`. Invalid formats and failed generation return a nonzero exit status. Generation runs synchronously by default. Set `ACESTEP_GENERATION_TIMEOUT` to a positive number of seconds to enable a wait timeout; this does not cancel GPU work.
 
 ---
 
